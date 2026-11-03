@@ -5,11 +5,14 @@ import type { BrightnessType, Category, ClothingItem, Occasion } from '../types'
 import { db, deleteItem, updateItem } from '../lib/db';
 import {
   BRIGHTNESS_LABELS,
+  CATEGORY_EMOJIS,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   OCCASIONS,
+  SUBCATEGORIES,
   TEMP_RANGES,
 } from '../lib/constants';
+import { PALETTE, brightnessOfHex } from '../lib/palette';
 import { BottomSheet, Chip, ColorDot, ItemImage } from '../components/ui';
 import type { Tab } from '../components/TabBar';
 
@@ -42,15 +45,6 @@ export default function Wardrobe({
     [items, cat, br, occ]
   );
 
-  const toggleOccasion = async (o: Occasion) => {
-    if (!selected) return;
-    const current = selected.occasions ?? ['casual'];
-    const next = current.includes(o) ? current.filter((x) => x !== o) : [...current, o];
-    if (next.length === 0) return; // co najmniej jedna okazja
-    await updateItem(selected.id, { occasions: next });
-    setSelected({ ...selected, occasions: next });
-  };
-
   const counts = useMemo(() => {
     const m: Record<string, number> = { all: items?.length ?? 0 };
     items?.forEach((i) => (m[i.category] = (m[i.category] ?? 0) + 1));
@@ -65,6 +59,35 @@ export default function Wardrobe({
   const close = () => {
     setSelected(null);
     setConfirmDelete(false);
+  };
+
+  const toggleOccasion = async (o: Occasion) => {
+    if (!selected) return;
+    const current = selected.occasions ?? ['casual'];
+    const next = current.includes(o) ? current.filter((x) => x !== o) : [...current, o];
+    if (next.length === 0) return;
+    await updateItem(selected.id, { occasions: next });
+    setSelected({ ...selected, occasions: next });
+  };
+
+  const changeCategory = async (newCat: Category) => {
+    if (!selected) return;
+    const firstSub = SUBCATEGORIES[newCat][0].label;
+    await updateItem(selected.id, { category: newCat, subCategory: firstSub });
+    setSelected({ ...selected, category: newCat, subCategory: firstSub });
+  };
+
+  const changeSubCategory = async (newSub: string) => {
+    if (!selected) return;
+    await updateItem(selected.id, { subCategory: newSub });
+    setSelected({ ...selected, subCategory: newSub });
+  };
+
+  const changeColor = async (name: string, hex: string) => {
+    if (!selected) return;
+    const brightnessType = brightnessOfHex(hex);
+    await updateItem(selected.id, { dominantColor: name, colorHex: hex, brightnessType });
+    setSelected({ ...selected, dominantColor: name, colorHex: hex, brightnessType });
   };
 
   const remove = async () => {
@@ -98,7 +121,7 @@ export default function Wardrobe({
         </Chip>
         {CATEGORY_ORDER.map((c) => (
           <Chip key={c} active={cat === c} onClick={() => setCat(c)}>
-            {CATEGORY_LABELS[c]} {counts[c] ? `(${counts[c]})` : ''}
+            {CATEGORY_EMOJIS[c]} {CATEGORY_LABELS[c]} {counts[c] ? `(${counts[c]})` : ''}
           </Chip>
         ))}
       </div>
@@ -126,7 +149,9 @@ export default function Wardrobe({
       {items && filtered.length === 0 ? (
         <div className="mx-4 rounded-3xl bg-ink-900 p-8 text-center">
           <p className="text-sm text-ink-300">
-            {items.length === 0 ? 'Nie masz jeszcze żadnych ubrań.' : 'Brak ubrań dla wybranych filtrów.'}
+            {items.length === 0
+              ? 'Nie masz jeszcze żadnych ubrań.'
+              : 'Brak ubrań dla wybranych filtrów.'}
           </p>
           {items.length === 0 && (
             <button
@@ -143,7 +168,7 @@ export default function Wardrobe({
             <button
               key={item.id}
               onClick={() => setSelected(item)}
-              className="overflow-hidden rounded-2xl bg-ink-900 text-left active:scale-[0.98] transition-transform"
+              className="overflow-hidden rounded-2xl bg-ink-900 text-left transition-transform active:scale-[0.98]"
             >
               <div className="relative aspect-square bg-ink-800">
                 <ItemImage item={item} className="h-full w-full" />
@@ -164,15 +189,14 @@ export default function Wardrobe({
 
       <BottomSheet open={!!selected} onClose={close} title={selected?.subCategory}>
         {selected && (
-          <div className="pb-3">
-            <div className="mx-auto aspect-square w-full max-w-xs overflow-hidden rounded-2xl bg-ink-800">
+          <div className="space-y-4 pb-3">
+            <div className="mx-auto aspect-square w-48 overflow-hidden rounded-2xl bg-ink-800">
               <ItemImage item={selected} className="h-full w-full" />
             </div>
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <dt className="text-ink-400">Kategoria</dt>
-              <dd>{CATEGORY_LABELS[selected.category]}</dd>
+
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
               <dt className="text-ink-400">Kolor</dt>
-              <dd className="flex items-center gap-2">
+              <dd className="flex items-center gap-2 font-medium">
                 <ColorDot hex={selected.colorHex} /> {selected.dominantColor}
               </dd>
               <dt className="text-ink-400">Jasność</dt>
@@ -184,7 +208,71 @@ export default function Wardrobe({
               <dt className="text-ink-400">Odporne na deszcz</dt>
               <dd>{selected.isRainproof ? 'Tak' : 'Nie'}</dd>
             </dl>
-            <div className="mt-4">
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                Kategoria (dotknij, aby zmienić)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {CATEGORY_ORDER.map((c) => (
+                  <Chip key={c} active={selected.category === c} onClick={() => changeCategory(c)}>
+                    {CATEGORY_EMOJIS[c]} {CATEGORY_LABELS[c]}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                Rodzaj
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {SUBCATEGORIES[selected.category].map((s) => (
+                  <Chip
+                    key={s.label}
+                    active={selected.subCategory === s.label}
+                    onClick={() => changeSubCategory(s.label)}
+                  >
+                    {s.label}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                Zmień kolor
+              </div>
+              <div className="grid grid-cols-5 gap-y-2.5 gap-x-2">
+                {PALETTE.map((p) => {
+                  const active = p.name === selected.dominantColor;
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => changeColor(p.name, p.hex)}
+                      className="flex flex-col items-center gap-1"
+                    >
+                      <span
+                        className={`h-8 w-8 rounded-full ring-offset-2 ring-offset-ink-900 ${
+                          active ? 'ring-2 ring-accent-400' : 'ring-1 ring-white/20'
+                        }`}
+                        style={{ backgroundColor: p.hex }}
+                      />
+                      <span
+                        className={`w-full truncate text-center text-[10px] ${
+                          active ? 'font-semibold text-white' : 'text-ink-400'
+                        }`}
+                      >
+                        {p.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
                 Przeznaczenie (dotknij, aby zmienić)
               </div>
@@ -200,13 +288,15 @@ export default function Wardrobe({
                 ))}
               </div>
             </div>
+
             <button
               onClick={remove}
-              className={`mt-5 flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 font-semibold transition-colors ${
+              className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 font-semibold transition-colors ${
                 confirmDelete ? 'bg-red-600 text-white' : 'bg-red-500/15 text-red-300'
               }`}
             >
-              <Trash2 size={18} /> {confirmDelete ? 'Dotknij ponownie, aby usunąć' : 'Usuń z szafy'}
+              <Trash2 size={18} />{' '}
+              {confirmDelete ? 'Dotknij ponownie, aby usunąć' : 'Usuń z szafy'}
             </button>
           </div>
         )}

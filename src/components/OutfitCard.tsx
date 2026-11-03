@@ -25,12 +25,16 @@ function Piece({ item, label }: { item: ClothingItem; label: string }) {
 }
 
 export default function OutfitCard({ outfit }: { outfit: Outfit }) {
-  const main: { item: ClothingItem; label: string }[] = [
-    { item: outfit.top, label: CATEGORY_LABELS.top },
-    { item: outfit.bottom, label: CATEGORY_LABELS.bottom },
-  ];
+  const main: { item: ClothingItem; label: string }[] = [];
+  if (outfit.onepiece) {
+    main.push({ item: outfit.onepiece, label: 'Sukienka / 1-cz.' });
+  } else {
+    if (outfit.top) main.push({ item: outfit.top, label: CATEGORY_LABELS.top });
+    if (outfit.bottom) main.push({ item: outfit.bottom, label: CATEGORY_LABELS.bottom });
+  }
   if (outfit.shoes) main.push({ item: outfit.shoes, label: CATEGORY_LABELS.shoes });
-  if (outfit.outerwear) main.push({ item: outfit.outerwear, label: 'Kurtka' });
+  if (outfit.outerwear) main.push({ item: outfit.outerwear, label: 'Wierzchnie' });
+  if (outfit.bag) main.push({ item: outfit.bag, label: 'Torebka / Plecak' });
 
   return (
     <section className="rounded-3xl bg-ink-900 p-4">
@@ -66,7 +70,10 @@ export default function OutfitCard({ outfit }: { outfit: Outfit }) {
       {outfit.notes.length > 0 && (
         <ul className="mt-4 space-y-1.5">
           {outfit.notes.map((n) => (
-            <li key={n} className="flex items-start gap-2 rounded-xl bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
+            <li
+              key={n}
+              className="flex items-start gap-2 rounded-xl bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200"
+            >
               <Info size={14} className="mt-0.5 shrink-0" />
               {n}
             </li>

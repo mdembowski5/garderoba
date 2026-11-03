@@ -1,4 +1,12 @@
-export type Category = 'top' | 'bottom' | 'shoes' | 'outerwear' | 'accessory';
+export type Category =
+  | 'top'
+  | 'bottom'
+  | 'onepiece'
+  | 'outerwear'
+  | 'shoes'
+  | 'bag'
+  | 'accessory';
+
 export type TempRange = 'hot' | 'mild' | 'cool' | 'cold';
 export type BrightnessType = 'light' | 'dark' | 'neutral';
 export type DayPreference = 'light' | 'dark' | 'any';
@@ -12,8 +20,8 @@ export interface ClothingItem {
   subCategory: string;
   tempRange: TempRange;
   isRainproof: boolean;
-  dominantColor: string; // nazwa z palety, np. "Granat"
-  colorHex: string; // np. "#1e2a4a"
+  dominantColor: string; // nazwa z palety, np. "Brąz", "Karmel / Camel", "Granat"
+  colorHex: string; // np. "#6b442a"
   brightnessType: BrightnessType;
   occasions: Occasion[]; // do jakich okazji pasuje (może być kilka)
   createdAt: number;
@@ -56,10 +64,15 @@ export interface Place {
 }
 
 export interface Outfit {
-  top: ClothingItem;
-  bottom: ClothingItem;
+  /** Góra (gdy strój dwuczęściowy) */
+  top?: ClothingItem;
+  /** Dół (gdy strój dwuczęściowy) */
+  bottom?: ClothingItem;
+  /** Sukienka / kombinezon / garnitur (gdy strój jednoczęściowy) */
+  onepiece?: ClothingItem;
   shoes?: ClothingItem;
   outerwear?: ClothingItem;
+  bag?: ClothingItem;
   accessories: ClothingItem[];
   notes: string[]; // wskazówki, np. brak kurtki przeciwdeszczowej
   score: number; // 0-100, harmonia barw

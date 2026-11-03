@@ -62,10 +62,12 @@ export function updateItem(id: string, patch: Partial<ClothingItem>): Promise<nu
 /** Zapisuje zaakceptowany strój i oznacza ubrania jako niedawno noszone. */
 export async function acceptOutfit(outfit: Outfit, apparentTemperature: number): Promise<void> {
   const ids = [
-    outfit.top.id,
-    outfit.bottom.id,
+    outfit.top?.id,
+    outfit.bottom?.id,
+    outfit.onepiece?.id,
     outfit.shoes?.id,
     outfit.outerwear?.id,
+    outfit.bag?.id,
     ...outfit.accessories.map((a) => a.id),
   ].filter((x): x is string => Boolean(x));
   const now = Date.now();

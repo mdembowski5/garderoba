@@ -1,12 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, Droplets, ImagePlus, Loader2, Pipette, RotateCcw, Sparkles } from 'lucide-react';
+import {
+  Camera,
+  Check,
+  Droplets,
+  ImagePlus,
+  Loader2,
+  Pipette,
+  RotateCcw,
+  Sparkles,
+} from 'lucide-react';
 import type { BrightnessType, Category, Occasion, TempRange } from '../types';
 import { addItem } from '../lib/db';
 import { compressImage, removeBackgroundImage, type CompressedImage } from '../lib/image';
 import { analyzeImage, type ColorAnalysis, type Point2D } from '../lib/colorAnalysis';
-import { PALETTE, brightnessOfHex } from '../lib/palette';
+import {
+  PALETTE,
+  brightnessOfHex,
+  hexToRgb,
+  nearestPaletteColor,
+} from '../lib/palette';
 import {
   BRIGHTNESS_LABELS,
+  CATEGORY_EMOJIS,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   OCCASIONS,
@@ -67,7 +82,7 @@ export default function AddItem({
   }, [draft]);
 
   const applyPreset = (cat: Category, label: string) => {
-    const preset = SUBCATEGORIES[cat].find((p) => p.label === label);
+    const preset = SUBCATEGORIES[cat].find((p) => p.label === label) ?? SUBCATEGORIES[cat][0];
     if (!preset) return;
     setTempIdx(TEMP_IDS.indexOf(preset.temp));
     setRainproof(Boolean(preset.rainproof));
@@ -77,11 +92,13 @@ export default function AddItem({
   const toggleOccasion = (o: Occasion) =>
     setOccasions((prev) => (prev.includes(o) ? prev.filter((x) => x !== o) : [...prev, o]));
 
-  const chooseCategory = (cat: Category) => {
+  const chooseCategory = (cat: Category, preferredSub?: string) => {
     setCategory(cat);
-    const first = SUBCATEGORIES[cat][0].label;
-    setSubCategory(first);
-    applyPreset(cat, first);
+    const list = SUBCATEGORIES[cat];
+    const chosen =
+      preferredSub && list.some((s) => s.label === preferredSub) ? preferredSub : list[0].label;
+    setSubCategory(chosen);
+    applyPreset(cat, chosen);
   };
 
   const chooseSubCategory = (label: string) => {
@@ -121,6 +138,7 @@ export default function AddItem({
       setColorHex(analysis.hex);
       setBrightness(analysis.brightness);
       setColorEdited(false);
+      chooseCategory(analysis.suggestedCategory, analysis.suggestedSubCategory);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się przetworzyć zdjęcia.');
     } finally {
@@ -165,6 +183,15 @@ export default function AddItem({
     setColorEdited(true);
   };
 
+  const onCustomHexChange = (hex: string) => {
+    const [r, g, b] = hexToRgb(hex);
+    const nearest = nearestPaletteColor(r, g, b);
+    setColorHex(hex);
+    setColorName(nearest.name);
+    setBrightness(brightnessOfHex(hex));
+    setColorEdited(true);
+  };
+
   const save = async () => {
     if (!draft || saving) return;
     setSaving(true);
@@ -199,7 +226,9 @@ export default function AddItem({
     <div className="scroll-area h-full px-4 pb-6 pt-safe">
       <header className="mb-4">
         <h1 className="text-2xl font-bold">Dodaj ubranie</h1>
-        <p className="text-sm text-ink-400">Tło jest automatycznie ignorowane, a zdjęcie zapisywane w telefonie</p>
+        <p className="text-sm text-ink-400">
+          Tło jest wycinane automatycznie, a kolor i sylwetka rozpoznawane ze zdjęcia
+        </p>
       </header>
 
       {/* Ukryte inputy: aparat (tylny) i galeria */}
@@ -226,9 +255,11 @@ export default function AddItem({
               <Camera size={40} className="text-accent-300" />
             )}
             <span className="text-lg font-semibold">
-              {busy ? 'Usuwanie tła i analiza koloru…' : 'Zrób zdjęcie'}
+              {busy ? 'Wycinanie tła i analiza ubrania…' : 'Zrób zdjęcie'}
             </span>
-            <span className="text-xs text-ink-400">Umieść ubranie na środku kadru – tło zostanie odcięte</span>
+            <span className="text-xs text-ink-400">
+              Umieść ubranie na środku kadru – tło i cienie zostaną odcięte
+            </span>
           </button>
           <button
             onClick={() => galleryRef.current?.click()}
@@ -240,7 +271,9 @@ export default function AddItem({
         </div>
       )}
 
-      {error && <div className="mt-3 rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-200">{error}</div>}
+      {error && (
+        <div className="mt-3 rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-200">{error}</div>
+      )}
 
       {draft && activeImage && (
         <div className="space-y-5">
@@ -278,54 +311,103 @@ export default function AddItem({
                   ? 'Kolor (wybrany ręcznie)'
                   : focusPoint
                   ? 'Kolor ze wskazanego miejsca'
-                  : 'Wykryty kolor ubrania (bez tła)'}
+                  : 'Wykryty kolor i fason'}
               </div>
               <div className="flex items-center gap-2 text-base font-semibold">
                 <ColorDot hex={colorHex} size={18} /> {colorName}
               </div>
-              <div className="text-ink-300">Jasność: {BRIGHTNESS_LABELS[brightness].toLowerCase()}</div>
+              <div className="truncate text-xs font-medium text-accent-300">
+                {CATEGORY_EMOJIS[category]} {CATEGORY_LABELS[category]} · {subCategory}
+              </div>
+              <div className="text-xs text-ink-300">
+                Jasność: {BRIGHTNESS_LABELS[brightness].toLowerCase()}
+              </div>
               <div className="flex flex-wrap gap-1.5 pt-0.5">
                 <button
                   type="button"
                   onClick={() => setUseCutout((v) => !v)}
                   className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
-                    useCutout ? 'bg-accent-500/25 text-accent-300 ring-1 ring-accent-400/40' : 'bg-ink-800 text-ink-300'
+                    useCutout
+                      ? 'bg-accent-500/25 text-accent-300 ring-1 ring-accent-400/40'
+                      : 'bg-ink-800 text-ink-300'
                   }`}
                 >
                   <Sparkles size={12} /> {useCutout ? 'Tło wycięte' : 'Oryginalne tło'}
                 </button>
               </div>
-              <div className="text-[11px] text-ink-400">
-                {activeImage.mime.replace('image/', '').toUpperCase()} · {Math.round(activeImage.blob.size / 1024)} KB ·{' '}
-                {activeImage.width}×{activeImage.height}
-              </div>
-              <button onClick={reset} className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-accent-300">
+              <button
+                onClick={reset}
+                className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-ink-400 active:text-white"
+              >
                 <RotateCcw size={12} /> Inne zdjęcie
               </button>
             </div>
           </div>
 
-          <Field label="Kolor dominujący – popraw jednym kliknięciem lub dotknij ubrania na zdjęciu">
-            <div className="flex flex-wrap gap-2.5">
+          <Field label="Kategoria ubrania">
+            <div className="flex flex-wrap gap-2">
+              {CATEGORY_ORDER.map((c) => (
+                <Chip key={c} active={c === category} onClick={() => chooseCategory(c)}>
+                  {CATEGORY_EMOJIS[c]} {CATEGORY_LABELS[c]}
+                </Chip>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Dokładny rodzaj">
+            <div className="flex flex-wrap gap-2">
+              {SUBCATEGORIES[category].map((s) => (
+                <Chip
+                  key={s.label}
+                  active={s.label === subCategory}
+                  onClick={() => chooseSubCategory(s.label)}
+                >
+                  {s.label}
+                </Chip>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Kolor dominujący (20 odcieni lub dotknij ubrania na zdjęciu)">
+            <div className="grid grid-cols-5 gap-y-3 gap-x-2">
               {PALETTE.map((p) => {
                 const active = p.name === colorName;
                 return (
                   <button
                     key={p.name}
+                    type="button"
                     onClick={() => pickPaletteColor(p.name, p.hex)}
                     className="flex flex-col items-center gap-1"
                     aria-label={p.name}
                   >
                     <span
-                      className={`h-10 w-10 rounded-full ring-offset-2 ring-offset-ink-950 ${
-                        active ? 'ring-2 ring-accent-400' : 'ring-1 ring-white/20'
+                      className={`h-9 w-9 rounded-full ring-offset-2 ring-offset-ink-950 transition-transform ${
+                        active ? 'scale-110 ring-2 ring-accent-400' : 'ring-1 ring-white/20'
                       }`}
                       style={{ backgroundColor: p.hex }}
                     />
-                    <span className={`text-[10px] ${active ? 'text-white' : 'text-ink-400'}`}>{p.name}</span>
+                    <span
+                      className={`w-full truncate text-center text-[10px] leading-tight ${
+                        active ? 'font-semibold text-white' : 'text-ink-400'
+                      }`}
+                    >
+                      {p.name}
+                    </span>
                   </button>
                 );
               })}
+            </div>
+            <div className="mt-3 flex items-center justify-between rounded-xl bg-ink-900 px-3 py-2 text-xs text-ink-300">
+              <span>Dokładny odcień z próbki: {colorHex.toUpperCase()}</span>
+              <label className="cursor-pointer font-semibold text-accent-300">
+                Własny odcień
+                <input
+                  type="color"
+                  value={colorHex}
+                  onChange={(e) => onCustomHexChange(e.target.value)}
+                  className="sr-only"
+                />
+              </label>
             </div>
           </Field>
 
@@ -333,30 +415,14 @@ export default function AddItem({
             <Segmented value={brightness} options={BRIGHTNESS_OPTIONS} onChange={setBrightness} />
           </Field>
 
-          <Field label="Kategoria">
-            <div className="flex flex-wrap gap-2">
-              {CATEGORY_ORDER.map((c) => (
-                <Chip key={c} active={c === category} onClick={() => chooseCategory(c)}>
-                  {CATEGORY_LABELS[c]}
-                </Chip>
-              ))}
-            </div>
-          </Field>
-
-          <Field label="Rodzaj">
-            <div className="flex flex-wrap gap-2">
-              {SUBCATEGORIES[category].map((s) => (
-                <Chip key={s.label} active={s.label === subCategory} onClick={() => chooseSubCategory(s.label)}>
-                  {s.label}
-                </Chip>
-              ))}
-            </div>
-          </Field>
-
           <Field label="Przeznaczenie – na jakie okazje (można kilka)">
             <div className="flex flex-wrap gap-2">
               {OCCASIONS.map((o) => (
-                <Chip key={o.id} active={occasions.includes(o.id)} onClick={() => toggleOccasion(o.id)}>
+                <Chip
+                  key={o.id}
+                  active={occasions.includes(o.id)}
+                  onClick={() => toggleOccasion(o.id)}
+                >
                   {o.emoji} {o.label}
                 </Chip>
               ))}
@@ -375,7 +441,12 @@ export default function AddItem({
             />
             <div className="mt-1 grid grid-cols-4 text-[11px] text-ink-400">
               {TEMP_RANGES.map((t, i) => (
-                <span key={t.id} className={`${i === 0 ? 'text-left' : i === 3 ? 'text-right' : 'text-center'} ${i === tempIdx ? 'font-semibold text-white' : ''}`}>
+                <span
+                  key={t.id}
+                  className={`${
+                    i === 0 ? 'text-left' : i === 3 ? 'text-right' : 'text-center'
+                  } ${i === tempIdx ? 'font-semibold text-white' : ''}`}
+                >
                   {t.label}
                 </span>
               ))}
@@ -399,7 +470,8 @@ export default function AddItem({
             disabled={saving}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent-500 py-4 text-base font-bold active:bg-accent-600 disabled:opacity-60"
           >
-            {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />} Zapisz w szafie
+            {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />} Zapisz
+            w szafie
           </button>
         </div>
       )}

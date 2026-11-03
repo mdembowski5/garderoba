@@ -1,6 +1,13 @@
-import type { BrightnessType } from '../types';
+import type { BrightnessType, Category } from '../types';
 import { loadImage } from './image';
-import { classifyBrightness, luminance, nearestPaletteColor, rgbToHex, srgbToLab } from './palette';
+import {
+  classifyBrightness,
+  luminance,
+  nearestPaletteColor,
+  rgbToHex,
+  rgbToHsv,
+  srgbToLab,
+} from './palette';
 
 export interface Point2D {
   /** Współrzędne znormalizowane 0..1 */
@@ -19,6 +26,10 @@ export interface ColorAnalysis {
   paletteHex: string;
   /** Odsetek pikseli zaklasyfikowanych jako ubranie (0..1) */
   foregroundRatio: number;
+  /** Sugerowana kategoria na podstawie kształtu sylwetki ubrania */
+  suggestedCategory: Category;
+  /** Sugerowany rodzaj ubrania */
+  suggestedSubCategory: string;
 }
 
 export interface SegmentationResult {
@@ -193,10 +204,14 @@ export function segmentGarment(
 
   clusters.sort((a, b) => b.count - a.count);
 
-  const countBits = (m: number) => ((m & 1) !== 0 ? 1 : 0) + ((m & 2) !== 0 ? 1 : 0) + ((m & 4) !== 0 ? 1 : 0) + ((m & 8) !== 0 ? 1 : 0);
+  const countBits = (m: number) =>
+    ((m & 1) !== 0 ? 1 : 0) +
+    ((m & 2) !== 0 ? 1 : 0) +
+    ((m & 4) !== 0 ? 1 : 0) +
+    ((m & 8) !== 0 ? 1 : 0);
 
   // Wybór klastrów tła: odrzucamy klaster, który występuje tylko na 1 krawędzi, nie ma narożników
-  // i jednocześnie pokrywa się z kolorem centrum (np. koszulka wychodząca dołem poza kadr).
+  // i jednocześnie pokrywa się z kolorem centrum (np. sukienka/koszulka wychodząca dołem poza kadr).
   const bgClusters = clusters.filter((c, idx) => {
     if (c.count < borderTotal * 0.05 && idx > 0) return false;
     const edges = countBits(c.edgesMask);
@@ -305,7 +320,6 @@ export function segmentGarment(
     }
   }
 
-  // Jeśli flood-fill zjadł >86% środka, próbujemy rygorystycznego progu, a w ostateczności elipsy centralnej
   if (centerFg < centerTotal * 0.14) {
     bgVisited = runFloodFill(10.0, 3.2);
     centerFg = 0;
@@ -327,7 +341,7 @@ export function segmentGarment(
     }
   }
 
-  // 5. Filtr większościowy 3×3 (usuwa pojedyncze ziarenka szumu) + wygładzenie krawędzi maski
+  // 5. Filtr większościowy 3×3 + wygładzenie krawędzi maski
   const cleanFg = new Uint8Array(total);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -387,12 +401,154 @@ export function segmentGarment(
 }
 
 /**
- * Analiza koloru ubrania po stronie klienta:
+ * Heurystyczna analiza sylwetki ubrania na podstawie maski segmentacji:
+ * rozpoznaje m.in. sukienki (smukła sylwetka rozszerzająca się ku dołowi bez rozcięcia nogawek),
+ * spodnie (widoczna przerwa między nogawkami w dolnej połowie), spódnice, buty oraz górę.
+ */
+function suggestShapeFromMask(
+  mask: Float32Array,
+  width: number,
+  height: number,
+  origWidth: number,
+  origHeight: number,
+  paletteName: string
+): { category: Category; subCategory: string } {
+  let minX = width;
+  let maxX = -1;
+  let minY = height;
+  let maxY = -1;
+  let fgCount = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y * width + x] >= 0.5) {
+        fgCount++;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  const bboxW = Math.max(1, maxX - minX + 1);
+  const bboxH = Math.max(1, maxY - minY + 1);
+  const areaRatio = fgCount / (width * height);
+
+  if (maxX < minX || bboxH < 6) {
+    return { category: 'top', subCategory: 't-shirt' };
+  }
+
+  // Rzeczywiste proporcje wysokości do szerokości ubrania (z uwzględnieniem proporcji zdjęcia)
+  const physW = (bboxW / width) * origWidth;
+  const physH = (bboxH / height) * origHeight;
+  const aspect = physH / Math.max(1, physW);
+
+  // Szerokość sylwetki w pasmach pionowych + detekcja przerwy między nogawkami w dolnej części
+  const bandSpan = (t0: number, t1: number): number => {
+    const r0 = Math.max(minY, Math.floor(minY + bboxH * t0));
+    const r1 = Math.min(maxY, Math.ceil(minY + bboxH * t1));
+    if (r1 < r0) return 0;
+    let sum = 0;
+    let rows = 0;
+    for (let y = r0; y <= r1; y++) {
+      let lx = -1;
+      let rx = -1;
+      for (let x = minX; x <= maxX; x++) {
+        if (mask[y * width + x] >= 0.5) {
+          if (lx === -1) lx = x;
+          rx = x;
+        }
+      }
+      if (lx !== -1) {
+        sum += (rx - lx + 1) / bboxW;
+        rows++;
+      }
+    }
+    return rows ? sum / rows : 0;
+  };
+
+  const upperSpan = bandSpan(0.18, 0.38); // ramiona / rękawy / klatka
+  const midSpan = bandSpan(0.42, 0.58); // talia
+  const lowerSpan = bandSpan(0.62, 0.86); // biodra / dół sukienki / nogawki
+
+  // Czy w dolnej części (58%–90% wysokości) jest pionowa przerwa między dwiema nogawkami?
+  let gapRows = 0;
+  let checkedRows = 0;
+  const legY0 = Math.floor(minY + bboxH * 0.58);
+  const legY1 = Math.ceil(minY + bboxH * 0.9);
+  for (let y = legY0; y <= legY1; y++) {
+    let lx = -1;
+    let rx = -1;
+    for (let x = minX; x <= maxX; x++) {
+      if (mask[y * width + x] >= 0.5) {
+        if (lx === -1) lx = x;
+        rx = x;
+      }
+    }
+    const span = rx - lx;
+    if (lx !== -1 && span >= bboxW * 0.35) {
+      checkedRows++;
+      const midStart = Math.floor(lx + span * 0.35);
+      const midEnd = Math.ceil(lx + span * 0.65);
+      let hasGap = false;
+      for (let x = midStart; x <= midEnd; x++) {
+        if (mask[y * width + x] < 0.3) {
+          hasGap = true;
+          break;
+        }
+      }
+      if (hasGap) gapRows++;
+    }
+  }
+  const hasLegGap = checkedRows >= 4 && gapRows / checkedRows >= 0.35;
+
+  // 1. Długa sylwetka (sukienka / kombinezon vs spodnie)
+  if (aspect >= 1.28) {
+    if (hasLegGap) {
+      const isDenim = paletteName === 'Niebieski' || paletteName === 'Granat' || paletteName === 'Błękit';
+      return { category: 'bottom', subCategory: isDenim ? 'jeansy' : 'spodnie materiałowe' };
+    }
+    return {
+      category: 'onepiece',
+      subCategory: aspect >= 1.65 ? 'sukienka maxi' : 'sukienka codzienna',
+    };
+  }
+
+  // 2. Sukienka o kroju trapezowym / A-line lub wcięta w talii (rozszerza się ku dołowi bez nogawek)
+  if (!hasLegGap && aspect >= 1.1 && lowerSpan >= midSpan * 1.05 && lowerSpan >= upperSpan * 0.92) {
+    return { category: 'onepiece', subCategory: 'sukienka codzienna' };
+  }
+
+  // 3. Spodnie / szorty (widoczna przerwa między nogawkami)
+  if (hasLegGap && aspect >= 0.85) {
+    const isDenim = paletteName === 'Niebieski' || paletteName === 'Granat' || paletteName === 'Błękit';
+    return {
+      category: 'bottom',
+      subCategory: aspect < 1.05 ? 'szorty' : isDenim ? 'jeansy' : 'spodnie materiałowe',
+    };
+  }
+
+  // 4. Spódnica (rozszerza się ku dołowi, krótsza sylwetka, brak rękawów u góry)
+  if (!hasLegGap && lowerSpan > upperSpan * 1.2 && aspect < 1.15) {
+    return { category: 'bottom', subCategory: 'spódnica midi' };
+  }
+
+  // 5. Mały lub poziomy obiekt (buty / dodatki)
+  if (areaRatio < 0.16 && aspect < 0.8) {
+    return { category: 'shoes', subCategory: 'sneakersy' };
+  }
+
+  // 6. Domyślnie: góra
+  return { category: 'top', subCategory: 't-shirt' };
+}
+
+/**
+ * Analiza koloru i sylwetki ubrania po stronie klienta:
  *  1. Segmentuje ubranie i odrzuca tło (ściana, podłoga, pościel, cienie).
- *  2. Waży piksele pierwszego planu gaussowsko wokół centrum (lub wskazanego punktu).
- *  3. Wyznacza dominujące skupisko barwy w przestrzeni CIE Lab z wygładzaniem sąsiedztwa
- *     (brak sztucznego dzielenia koloru na granicach kubełków RGB).
- *  4. Oblicza luminancję L = 0.2126R + 0.7152G + 0.0722B oraz najbliższy kolor palety.
+ *  2. Wyznacza dominujące skupisko barwy w przestrzeni CIE Lab ze wzmocnieniem nasycenia HSV.
+ *  3. Oblicza kolor z dobrze oświetlonej powierzchni materiału (45–88 percentyl jasności),
+ *     odrzucając głębokie cienie w fałdach materiału (dzięki czemu np. brązowa sukienka nie staje się czarna).
  */
 export async function analyzeImage(blob: Blob, focusPoint?: Point2D): Promise<ColorAnalysis> {
   const img = await loadImage(blob);
@@ -403,14 +559,23 @@ export async function analyzeImage(blob: Blob, focusPoint?: Point2D): Promise<Co
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, ANALYSIS_SIZE, ANALYSIS_SIZE);
   const { data } = ctx.getImageData(0, 0, ANALYSIS_SIZE, ANALYSIS_SIZE);
-  return analyzePixels(data, ANALYSIS_SIZE, ANALYSIS_SIZE, focusPoint);
+  return analyzePixels(
+    data,
+    ANALYSIS_SIZE,
+    ANALYSIS_SIZE,
+    focusPoint,
+    img.naturalWidth || ANALYSIS_SIZE,
+    img.naturalHeight || ANALYSIS_SIZE
+  );
 }
 
 export function analyzePixels(
   data: Uint8ClampedArray | number[],
   width = 50,
   height = 50,
-  focusPoint?: Point2D
+  focusPoint?: Point2D,
+  origWidth = width,
+  origHeight = height
 ): ColorAnalysis {
   const total = width * height;
   const seg = segmentGarment(data, width, height, focusPoint);
@@ -434,13 +599,29 @@ export function analyzePixels(
   }
 
   const bins = new Map<number, LabBin>();
+  const fgSamples: {
+    r: number;
+    g: number;
+    b: number;
+    L: number;
+    a: number;
+    bLab: number;
+    lum: number;
+    w: number;
+  }[] = [];
   let fgPixelCount = 0;
+
+  // Próbkujemy wnętrze maski (mask >= 0.5), aby uniknąć ciemnej obwódki na styku ubrania z tłem
+  let minMaskThresh = 0.5;
+  let testCount = 0;
+  for (let i = 0; i < total; i++) if (mask[i] >= 0.5) testCount++;
+  if (testCount < total * 0.04) minMaskThresh = 0.22;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       const fg = mask[i];
-      if (fg < 0.25) continue;
+      if (fg < minMaskThresh) continue;
       const idx = i * 4;
       if (data[idx + 3] < 128) continue;
 
@@ -454,7 +635,6 @@ export function analyzePixels(
       const dy = (y + 0.5) / height - cy;
       const spatialW = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
 
-      // Dodatkowe wzmocnienie dla pikseli wyraźnie różniących się od tła
       let minBg = Infinity;
       for (const bg of bgLabs) {
         const d = shadowAwareLabDist(lLab, aLab, bLab, bg[0], bg[1], bg[2]);
@@ -465,7 +645,9 @@ export function analyzePixels(
       const w = fg * fg * spatialW * contrastW;
       if (w <= 1e-5) continue;
 
-      // Kubełki w CIE Lab co ~6 jednostek
+      const lum = luminance(r, g, b);
+      fgSamples.push({ r, g, b, L: lLab, a: aLab, bLab, lum, w });
+
       const lBin = Math.max(0, Math.min(16, Math.round(lLab / 6)));
       const aBin = Math.max(0, Math.min(42, Math.round((aLab + 128) / 6)));
       const bBin = Math.max(0, Math.min(42, Math.round((bLab + 128) / 6)));
@@ -500,7 +682,6 @@ export function analyzePixels(
   const binList = Array.from(bins.values());
   let bestCluster: { L: number; a: number; b: number; density: number } | undefined;
 
-  // Wygładzanie gęstości sąsiedztwa w Lab – zapobiega rozbijaniu koloru na granicy kubełków
   for (const b1 of binList) {
     let density = 0;
     for (const b2 of binList) {
@@ -508,7 +689,7 @@ export function analyzePixels(
       const da = Math.abs(b1.aBin - b2.aBin);
       const db = Math.abs(b1.bBin - b2.bBin);
       if (dl <= 2 && da <= 2 && db <= 2) {
-        const dist2 = dl * dl * 0.5 + da * da + db * db;
+        const dist2 = dl * dl * 0.45 + da * da + db * db;
         if (dist2 <= 5) {
           density += b2.w / (1 + 0.25 * dist2);
         }
@@ -517,10 +698,15 @@ export function analyzePixels(
     const meanL = b1.sumL / b1.w;
     const meanA = b1.sumA / b1.w;
     const meanB = b1.sumB / b1.w;
-    // Lekka preferencja dla nasyconego koloru ubrania względem szarych cieni
+    const meanR = b1.sumR / b1.w;
+    const meanG = b1.sumG / b1.w;
+    const meanB_rgb = b1.sumB_rgb / b1.w;
+
     const chroma = Math.hypot(meanA, meanB);
-    const chromaBoost = chroma > 14 ? 1.15 : 1.0;
-    const score = density * chromaBoost;
+    const { s } = rgbToHsv(meanR, meanG, meanB_rgb);
+    // Wzmacniamy rzeczywistą barwę materiału względem ciemnych, wypranych z koloru cieni w fałdach
+    const colorBoost = (chroma > 12 ? 1.18 : 1.0) * (s > 0.25 && meanL > 10 ? 1.22 : 1.0);
+    const score = density * colorBoost;
 
     if (!bestCluster || score > bestCluster.density) {
       bestCluster = { L: meanL, a: meanA, b: meanB, density: score };
@@ -532,31 +718,55 @@ export function analyzePixels(
   let b = 128;
 
   if (bestCluster) {
-    let sumR = 0;
-    let sumG = 0;
-    let sumB = 0;
-    let sumW = 0;
-    for (const bin of binList) {
-      const bL = bin.sumL / bin.w;
-      const bA = bin.sumA / bin.w;
-      const bB = bin.sumB / bin.w;
-      const d = shadowAwareLabDist(bL, bA, bB, bestCluster.L, bestCluster.a, bestCluster.b);
-      if (d <= 15) {
-        sumR += bin.sumR;
-        sumG += bin.sumG;
-        sumB += bin.sumB_rgb;
-        sumW += bin.w;
+    // Zbieramy piksele należące do dominującej barwy materiału (tolerując różnice oświetlenia L)
+    const clusterPixels = fgSamples.filter(
+      (p) => shadowAwareLabDist(p.L, p.a, p.bLab, bestCluster!.L, bestCluster!.a, bestCluster!.b) <= 16
+    );
+
+    if (clusterPixels.length >= 8) {
+      // Sortujemy wg jasności i bierzemy dobrze oświetloną powierzchnię materiału (45–88 percentyl),
+      // odrzucając głębokie cienie w zagięciach materiału oraz prześwietlone odblaski.
+      clusterPixels.sort((p1, p2) => p1.lum - p2.lum);
+      const i0 = Math.floor(clusterPixels.length * 0.45);
+      const i1 = Math.max(i0 + 1, Math.ceil(clusterPixels.length * 0.88));
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let sumW = 0;
+      for (let i = i0; i < i1; i++) {
+        const p = clusterPixels[i];
+        sumR += p.r * p.w;
+        sumG += p.g * p.w;
+        sumB += p.b * p.w;
+        sumW += p.w;
       }
-    }
-    if (sumW > 0) {
-      r = sumR / sumW;
-      g = sumG / sumW;
-      b = sumB / sumW;
+      if (sumW > 0) {
+        r = sumR / sumW;
+        g = sumG / sumW;
+        b = sumB / sumW;
+      }
+    } else if (clusterPixels.length > 0) {
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let sumW = 0;
+      for (const p of clusterPixels) {
+        sumR += p.r * p.w;
+        sumG += p.g * p.w;
+        sumB += p.b * p.w;
+        sumW += p.w;
+      }
+      if (sumW > 0) {
+        r = sumR / sumW;
+        g = sumG / sumW;
+        b = sumB / sumW;
+      }
     }
   }
 
   const L = luminance(r, g, b);
   const palette = nearestPaletteColor(r, g, b);
+  const shape = suggestShapeFromMask(mask, width, height, origWidth, origHeight, palette.name);
 
   return {
     r: Math.round(r),
@@ -568,5 +778,7 @@ export function analyzePixels(
     paletteName: palette.name,
     paletteHex: palette.hex,
     foregroundRatio: fgPixelCount / total,
+    suggestedCategory: shape.category,
+    suggestedSubCategory: shape.subCategory,
   };
 }
