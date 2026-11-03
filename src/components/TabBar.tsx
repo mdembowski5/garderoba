@@ -1,16 +1,17 @@
-import { Plus, Shirt, Sparkles, type LucideIcon } from 'lucide-react';
+import { Briefcase, Plus, Shirt, Sparkles, type LucideIcon } from 'lucide-react';
 
-export type Tab = 'home' | 'add' | 'wardrobe';
+export type Tab = 'home' | 'add' | 'wardrobe' | 'assistant';
 
 const TABS: { id: Tab; label: string; Icon: LucideIcon }[] = [
   { id: 'home', label: 'Stylizacja', Icon: Sparkles },
   { id: 'add', label: 'Dodaj', Icon: Plus },
   { id: 'wardrobe', label: 'Szafa', Icon: Shirt },
+  { id: 'assistant', label: 'Asystent', Icon: Briefcase },
 ];
 
 export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
   return (
-    <nav className="pb-safe shrink-0 border-t border-white/10 bg-ink-900/95 px-4 pt-2 backdrop-blur">
+    <nav className="pb-safe shrink-0 border-t border-white/10 bg-ink-900/95 px-2 pt-2 backdrop-blur">
       <div className="mx-auto flex max-w-md items-center justify-around">
         {TABS.map(({ id, label, Icon }) => {
           const active = id === tab;
@@ -28,7 +29,7 @@ export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab)
                   isAdd ? 'w-12 bg-accent-500 text-white' : 'w-8'
                 }`}
               >
-                <Icon size={isAdd ? 22 : 22} strokeWidth={active || isAdd ? 2.4 : 1.8} />
+                <Icon size={22} strokeWidth={active || isAdd ? 2.4 : 1.8} />
               </span>
               {label}
             </button>

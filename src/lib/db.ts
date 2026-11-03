@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { ClothingItem, NewClothingItem, Outfit, SavedOutfit } from '../types';
+import type { ClothingItem, NewClothingItem, Occasion, Outfit, SavedOutfit } from '../types';
 import { defaultOccasions } from './constants';
 
 class WardrobeDB extends Dexie {
@@ -12,7 +12,6 @@ class WardrobeDB extends Dexie {
       items: 'id, category, brightnessType, createdAt',
       outfits: 'id, acceptedAt',
     });
-    // v2: dodano pole `occasions` – starym ubraniom przypisujemy okazje na podstawie rodzaju.
     this.version(2)
       .stores({
         items: 'id, category, brightnessType, createdAt',
@@ -46,7 +45,14 @@ export function newId(): string {
 }
 
 export async function addItem(data: NewClothingItem): Promise<ClothingItem> {
-  const item: ClothingItem = { ...data, id: newId(), createdAt: Date.now() };
+  const item: ClothingItem = {
+    ...data,
+    id: newId(),
+    createdAt: Date.now(),
+    wearCount: 0,
+    inLaundry: false,
+    isFavorite: false,
+  };
   await db.items.add(item);
   return item;
 }
@@ -59,9 +65,8 @@ export function updateItem(id: string, patch: Partial<ClothingItem>): Promise<nu
   return db.items.update(id, patch);
 }
 
-/** Zapisuje zaakceptowany strój i oznacza ubrania jako niedawno noszone. */
-export async function acceptOutfit(outfit: Outfit, apparentTemperature: number): Promise<void> {
-  const ids = [
+export function outfitItemIds(outfit: Outfit): string[] {
+  return [
     outfit.top?.id,
     outfit.bottom?.id,
     outfit.onepiece?.id,
@@ -70,11 +75,127 @@ export async function acceptOutfit(outfit: Outfit, apparentTemperature: number):
     outfit.bag?.id,
     ...outfit.accessories.map((a) => a.id),
   ].filter((x): x is string => Boolean(x));
+}
+
+/** Zapisuje zaakceptowany strój, zwiększa licznik założeń i oznacza ubrania jako niedawno noszone. */
+export async function acceptOutfit(
+  outfit: Outfit,
+  apparentTemperature: number,
+  occasion?: Occasion
+): Promise<void> {
+  const ids = outfitItemIds(outfit);
   const now = Date.now();
   await db.transaction('rw', db.items, db.outfits, async () => {
-    await db.outfits.add({ id: newId(), itemIds: ids, acceptedAt: now, apparentTemperature });
-    await db.items.where('id').anyOf(ids).modify({ lastWornAt: now });
+    await db.outfits.add({
+      id: newId(),
+      itemIds: ids,
+      acceptedAt: now,
+      apparentTemperature,
+      occasion,
+      score: outfit.score,
+      isFavorite: false,
+    });
+    await db.items
+      .where('id')
+      .anyOf(ids)
+      .modify((item: ClothingItem) => {
+        item.lastWornAt = now;
+        item.wearCount = (item.wearCount ?? 0) + 1;
+      });
   });
+}
+
+/** Zapisuje stylizację jako ulubioną. */
+export async function saveFavoriteOutfit(
+  outfit: Outfit,
+  apparentTemperature: number,
+  occasion?: Occasion
+): Promise<void> {
+  const ids = outfitItemIds(outfit);
+  await db.outfits.add({
+    id: newId(),
+    itemIds: ids,
+    acceptedAt: Date.now(),
+    apparentTemperature,
+    occasion,
+    score: outfit.score,
+    isFavorite: true,
+  });
+}
+
+export function deleteSavedOutfit(id: string): Promise<void> {
+  return db.outfits.delete(id);
+}
+
+export function toggleSavedOutfitFavorite(id: string, isFavorite: boolean): Promise<number> {
+  return db.outfits.update(id, { isFavorite });
+}
+
+/** Oznacza wszystkie ubrania z kosza na pranie jako czyste. */
+export async function clearLaundry(): Promise<void> {
+  await db.items.toCollection().modify((item: ClothingItem) => {
+    if (item.inLaundry) item.inLaundry = false;
+  });
+}
+
+// ---- Eksport / Import kopii zapasowej (JSON + Base64) ----
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('Błąd odczytu zdjęcia'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
+export interface WardrobeBackupFile {
+  version: 1;
+  exportedAt: number;
+  items: (Omit<ClothingItem, 'imageBlob'> & { imageDataUrl: string })[];
+  outfits: SavedOutfit[];
+}
+
+export async function exportWardrobeBackup(): Promise<string> {
+  const [items, outfits] = await Promise.all([db.items.toArray(), db.outfits.toArray()]);
+  const serializedItems = await Promise.all(
+    items.map(async ({ imageBlob, ...rest }) => ({
+      ...rest,
+      imageDataUrl: await blobToDataUrl(imageBlob),
+    }))
+  );
+  const payload: WardrobeBackupFile = {
+    version: 1,
+    exportedAt: Date.now(),
+    items: serializedItems,
+    outfits,
+  };
+  return JSON.stringify(payload);
+}
+
+export async function importWardrobeBackup(json: string): Promise<number> {
+  const parsed = JSON.parse(json) as WardrobeBackupFile;
+  if (!parsed || !Array.isArray(parsed.items)) {
+    throw new Error('Nieprawidłowy plik kopii zapasowej.');
+  }
+  const restoredItems: ClothingItem[] = await Promise.all(
+    parsed.items.map(async ({ imageDataUrl, ...rest }) => ({
+      ...rest,
+      imageBlob: await dataUrlToBlob(imageDataUrl),
+    }))
+  );
+  await db.transaction('rw', db.items, db.outfits, async () => {
+    await db.items.bulkPut(restoredItems);
+    if (Array.isArray(parsed.outfits)) {
+      await db.outfits.bulkPut(parsed.outfits);
+    }
+  });
+  return restoredItems.length;
 }
 
 /** Prosi przeglądarkę o trwały magazyn (ogranicza ryzyko wyczyszczenia danych przez iOS). */

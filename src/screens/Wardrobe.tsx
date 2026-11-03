@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Droplets, Plus, Trash2 } from 'lucide-react';
+import { Droplets, Heart, Plus, Sparkles, Trash2, WashingMachine } from 'lucide-react';
 import type { BrightnessType, Category, ClothingItem, Occasion } from '../types';
-import { db, deleteItem, updateItem } from '../lib/db';
+import { clearLaundry, db, deleteItem, updateItem } from '../lib/db';
 import {
   BRIGHTNESS_LABELS,
   CATEGORY_EMOJIS,
@@ -16,7 +16,7 @@ import { PALETTE, brightnessOfHex } from '../lib/palette';
 import { BottomSheet, Chip, ColorDot, ItemImage } from '../components/ui';
 import type { Tab } from '../components/TabBar';
 
-type CatFilter = 'all' | Category;
+type CatFilter = 'all' | 'fav' | 'laundry' | Category;
 type BrFilter = 'all' | BrightnessType;
 type OccFilter = 'all' | Occasion;
 
@@ -36,18 +36,28 @@ export default function Wardrobe({
 
   const filtered = useMemo(
     () =>
-      (items ?? []).filter(
-        (i) =>
-          (cat === 'all' || i.category === cat) &&
-          (br === 'all' || i.brightnessType === br) &&
-          (occ === 'all' || (i.occasions ?? ['casual']).includes(occ))
-      ),
+      (items ?? []).filter((i) => {
+        if (cat === 'fav' && !i.isFavorite) return false;
+        if (cat === 'laundry' && !i.inLaundry) return false;
+        if (cat !== 'all' && cat !== 'fav' && cat !== 'laundry' && i.category !== cat) return false;
+        if (br !== 'all' && i.brightnessType !== br) return false;
+        if (occ !== 'all' && !(i.occasions ?? ['casual']).includes(occ)) return false;
+        return true;
+      }),
     [items, cat, br, occ]
   );
 
   const counts = useMemo(() => {
-    const m: Record<string, number> = { all: items?.length ?? 0 };
-    items?.forEach((i) => (m[i.category] = (m[i.category] ?? 0) + 1));
+    const m: Record<string, number> = {
+      all: items?.length ?? 0,
+      fav: 0,
+      laundry: 0,
+    };
+    items?.forEach((i) => {
+      m[i.category] = (m[i.category] ?? 0) + 1;
+      if (i.isFavorite) m.fav++;
+      if (i.inLaundry) m.laundry++;
+    });
     return m;
   }, [items]);
 
@@ -68,6 +78,26 @@ export default function Wardrobe({
     if (next.length === 0) return;
     await updateItem(selected.id, { occasions: next });
     setSelected({ ...selected, occasions: next });
+  };
+
+  const toggleItemFavorite = async () => {
+    if (!selected) return;
+    const next = !selected.isFavorite;
+    await updateItem(selected.id, { isFavorite: next });
+    setSelected({ ...selected, isFavorite: next });
+  };
+
+  const toggleItemLaundry = async () => {
+    if (!selected) return;
+    const next = !selected.inLaundry;
+    await updateItem(selected.id, { inLaundry: next });
+    setSelected({ ...selected, inLaundry: next });
+    notify(next ? 'Wrzucono do kosza na pranie 🧺' : 'Oznaczono jako czyste ✨');
+  };
+
+  const handleWashAll = async () => {
+    await clearLaundry();
+    notify('Wszystkie ubrania wyprane i gotowe do noszenia! ✨');
   };
 
   const changeCategory = async (newCat: Category) => {
@@ -113,12 +143,30 @@ export default function Wardrobe({
             {totalKB >= 1024 ? `${(totalKB / 1024).toFixed(1)} MB` : `${totalKB} KB`}
           </p>
         </div>
+        {counts.laundry > 0 && (
+          <button
+            onClick={handleWashAll}
+            className="flex items-center gap-1.5 rounded-full bg-sky-500/20 px-3 py-1.5 text-xs font-semibold text-sky-300 active:bg-sky-500/30"
+          >
+            <Sparkles size={13} /> Wypierz ({counts.laundry})
+          </button>
+        )}
       </header>
 
       <div className="no-scrollbar mb-2 flex gap-2 overflow-x-auto px-4">
         <Chip active={cat === 'all'} onClick={() => setCat('all')}>
           Wszystko {counts.all ? `(${counts.all})` : ''}
         </Chip>
+        {counts.fav > 0 && (
+          <Chip active={cat === 'fav'} onClick={() => setCat('fav')}>
+            ❤️ Ulubione ({counts.fav})
+          </Chip>
+        )}
+        {counts.laundry > 0 && (
+          <Chip active={cat === 'laundry'} onClick={() => setCat('laundry')}>
+            🧺 W praniu ({counts.laundry})
+          </Chip>
+        )}
         {CATEGORY_ORDER.map((c) => (
           <Chip key={c} active={cat === c} onClick={() => setCat(c)}>
             {CATEGORY_EMOJIS[c]} {CATEGORY_LABELS[c]} {counts[c] ? `(${counts[c]})` : ''}
@@ -171,10 +219,28 @@ export default function Wardrobe({
               className="overflow-hidden rounded-2xl bg-ink-900 text-left transition-transform active:scale-[0.98]"
             >
               <div className="relative aspect-square bg-ink-800">
-                <ItemImage item={item} className="h-full w-full" />
+                <ItemImage
+                  item={item}
+                  className={`h-full w-full ${item.inLaundry ? 'opacity-50 grayscale-[40%]' : ''}`}
+                />
+                {item.isFavorite && (
+                  <span className="absolute left-1.5 top-1.5 rounded-full bg-rose-500/90 p-1 text-white">
+                    <Heart size={11} fill="currentColor" />
+                  </span>
+                )}
                 {item.isRainproof && (
                   <span className="absolute right-1.5 top-1.5 rounded-full bg-sky-500/90 p-1">
                     <Droplets size={12} />
+                  </span>
+                )}
+                {item.inLaundry && (
+                  <span className="absolute inset-x-2 bottom-2 flex items-center justify-center gap-1 rounded-lg bg-amber-500/90 py-1 text-[11px] font-bold text-ink-950">
+                    <WashingMachine size={12} /> W praniu
+                  </span>
+                )}
+                {!item.inLaundry && (item.wearCount ?? 0) > 0 && (
+                  <span className="absolute bottom-1.5 right-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white/85 backdrop-blur-sm">
+                    {item.wearCount}×
                   </span>
                 )}
               </div>
@@ -194,6 +260,33 @@ export default function Wardrobe({
               <ItemImage item={selected} className="h-full w-full" />
             </div>
 
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={toggleItemFavorite}
+                className={`flex items-center justify-center gap-2 rounded-2xl py-2.5 text-xs font-semibold transition-colors ${
+                  selected.isFavorite
+                    ? 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-400/40'
+                    : 'bg-ink-800 text-ink-300'
+                }`}
+              >
+                <Heart size={15} fill={selected.isFavorite ? 'currentColor' : 'none'} />
+                {selected.isFavorite ? 'Ulubione' : 'Dodaj do ulubionych'}
+              </button>
+              <button
+                type="button"
+                onClick={toggleItemLaundry}
+                className={`flex items-center justify-center gap-2 rounded-2xl py-2.5 text-xs font-semibold transition-colors ${
+                  selected.inLaundry
+                    ? 'bg-amber-500/25 text-amber-200 ring-1 ring-amber-400/40'
+                    : 'bg-ink-800 text-ink-300'
+                }`}
+              >
+                <WashingMachine size={15} />
+                {selected.inLaundry ? 'W praniu (dotknij = czyste)' : 'Wrzuć do prania'}
+              </button>
+            </div>
+
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
               <dt className="text-ink-400">Kolor</dt>
               <dd className="flex items-center gap-2 font-medium">
@@ -205,8 +298,8 @@ export default function Wardrobe({
               <dd>
                 {tempInfo(selected).label} ({tempInfo(selected).hint})
               </dd>
-              <dt className="text-ink-400">Odporne na deszcz</dt>
-              <dd>{selected.isRainproof ? 'Tak' : 'Nie'}</dd>
+              <dt className="text-ink-400">Założono</dt>
+              <dd>{selected.wearCount ?? 0} razy</dd>
             </dl>
 
             <div>

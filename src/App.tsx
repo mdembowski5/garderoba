@@ -3,6 +3,7 @@ import TabBar, { type Tab } from './components/TabBar';
 import Dashboard from './screens/Dashboard';
 import AddItem from './screens/AddItem';
 import Wardrobe from './screens/Wardrobe';
+import Assistant from './screens/Assistant';
 import { useWeather } from './hooks/useWeather';
 
 export default function App() {
@@ -33,6 +34,9 @@ export default function App() {
         </div>
         <div className={screen('wardrobe')}>
           <Wardrobe onNavigate={setTab} notify={notify} />
+        </div>
+        <div className={screen('assistant')}>
+          <Assistant notify={notify} />
         </div>
 
         {toast && (

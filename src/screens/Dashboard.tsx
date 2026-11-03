@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Check, Plus, Shirt, Shuffle } from 'lucide-react';
-import type { DayPreference, Occasion, RecommendResult } from '../types';
-import { acceptOutfit, db } from '../lib/db';
-import { recommendOutfit } from '../lib/outfit';
+import type { Category, ClothingItem, DayPreference, Occasion, RecommendResult } from '../types';
+import { acceptOutfit, db, saveFavoriteOutfit } from '../lib/db';
+import { recommendOutfit, swapOutfitPiece } from '../lib/outfit';
 import { OCCASIONS, PREFERENCE_LABELS } from '../lib/constants';
 import type { WeatherState } from '../hooks/useWeather';
 import WeatherCard from '../components/WeatherCard';
@@ -43,12 +43,16 @@ export default function Dashboard({
   const [occasion, setOccasion] = useState<Occasion>(loadOccasion);
   const [result, setResult] = useState<RecommendResult | null>(null);
   const [accepted, setAccepted] = useState(false);
+  const [savedFav, setSavedFav] = useState(false);
+  const [locked, setLocked] = useState<Partial<Record<Category, ClothingItem>>>({});
 
   const seen = useRef<Set<string>>(new Set());
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
 
   const generate = useCallback(
     (resetHistory: boolean) => {
@@ -59,6 +63,7 @@ export default function Dashboard({
       const r = recommendOutfit(list, w, {
         preference: pref,
         occasion,
+        locked: lockedRef.current,
         seed: Math.floor(Math.random() * 2 ** 32),
         exclude: seen.current,
       });
@@ -68,13 +73,14 @@ export default function Dashboard({
       }
       setResult(r);
       setAccepted(false);
+      setSavedFav(false);
     },
     [pref, occasion]
   );
 
-  // Regeneruj tylko, gdy zmieni się skład szafy, istotne warunki pogodowe lub preferencja
-  // (oznaczenie „noszone” po akceptacji nie powinno zmieniać wyświetlanego zestawu).
-  const itemsKey = items ? items.map((i) => i.id).join(',') : 'loading';
+  const itemsKey = items
+    ? items.map((i) => `${i.id}:${i.inLaundry ? 1 : 0}`).join(',')
+    : 'loading';
   const weatherKey = weather
     ? `${Math.round(weather.apparentTemperature)}|${weather.weatherCode}|${weather.precipitation > 0}|${weather.isDay}`
     : 'none';
@@ -92,9 +98,47 @@ export default function Dashboard({
     setOccasion(o);
   };
 
+  const toggleLock = (cat: Category, item: ClothingItem) => {
+    setLocked((prev) => {
+      const next = { ...prev };
+      if (next[cat]?.id === item.id) {
+        delete next[cat];
+      } else {
+        // Przypięcie sukienki odblokowuje górę/dół i odwrotnie
+        if (cat === 'onepiece') {
+          delete next.top;
+          delete next.bottom;
+        } else if (cat === 'top' || cat === 'bottom') {
+          delete next.onepiece;
+        }
+        next[cat] = item;
+      }
+      return next;
+    });
+  };
+
+  const handleSwapPiece = (cat: Category) => {
+    if (!result?.ok || !items || !weather) return;
+    const swapped = swapOutfitPiece(result.outfit, cat, items, weather, occasion);
+    if (!swapped) {
+      notify('Brak innego pasującego elementu w tej kategorii');
+      return;
+    }
+    setResult({ ok: true, outfit: swapped });
+    setAccepted(false);
+    setSavedFav(false);
+  };
+
+  const handleSaveFavorite = async () => {
+    if (!result?.ok || !weather || savedFav) return;
+    await saveFavoriteOutfit(result.outfit, weather.apparentTemperature, occasion);
+    setSavedFav(true);
+    notify('Zapisano w ulubionych stylizacjach ❤️');
+  };
+
   const accept = async () => {
     if (!result?.ok || !weather || accepted) return;
-    await acceptOutfit(result.outfit, weather.apparentTemperature);
+    await acceptOutfit(result.outfit, weather.apparentTemperature, occasion);
     setAccepted(true);
     notify('Strój zaakceptowany – miłego dnia! ✨');
   };
@@ -105,14 +149,16 @@ export default function Dashboard({
     <div className="scroll-area h-full px-4 pb-6 pt-safe">
       <header className="mb-4">
         <h1 className="text-2xl font-bold">Dzisiejszy strój</h1>
-        <p className="text-sm text-ink-400">Dobrany do pogody i harmonii barw</p>
+        <p className="text-sm text-ink-400">Dobrany do pogody, okazji i harmonii barw</p>
       </header>
 
       <div className="space-y-4">
         <WeatherCard state={weatherState} />
 
         <div>
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">Okazja</div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+            Okazja
+          </div>
           <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
             {OCCASIONS.map((o) => (
               <Chip key={o.id} active={o.id === occasion} onClick={() => changeOccasion(o.id)}>
@@ -129,7 +175,7 @@ export default function Dashboard({
             <Shirt size={36} className="mx-auto mb-3 text-accent-400" />
             <h2 className="font-bold">Twoja szafa jest pusta</h2>
             <p className="mt-1 text-sm text-ink-400">
-              Dodaj kilka ubrań (góra, dół, buty), aby otrzymać pierwszą stylizację.
+              Dodaj kilka ubrań (góra, dół lub sukienka, buty), aby otrzymać pierwszą stylizację.
             </p>
             <button
               onClick={() => onNavigate('add')}
@@ -142,7 +188,14 @@ export default function Dashboard({
           <div className="h-64 animate-pulse rounded-3xl bg-ink-900" />
         ) : result?.ok ? (
           <>
-            <OutfitCard outfit={result.outfit} />
+            <OutfitCard
+              outfit={result.outfit}
+              lockedCategories={locked}
+              onToggleLock={toggleLock}
+              onSwapPiece={handleSwapPiece}
+              isSavedFavorite={savedFav}
+              onSaveFavorite={handleSaveFavorite}
+            />
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => generate(false)}
@@ -154,7 +207,9 @@ export default function Dashboard({
                 onClick={accept}
                 disabled={accepted}
                 className={`flex items-center justify-center gap-2 rounded-2xl py-3.5 font-semibold transition-colors ${
-                  accepted ? 'bg-emerald-600/40 text-emerald-200' : 'bg-accent-500 active:bg-accent-600'
+                  accepted
+                    ? 'bg-emerald-600/40 text-emerald-200'
+                    : 'bg-accent-500 active:bg-accent-600'
                 }`}
               >
                 <Check size={18} /> {accepted ? 'Zaakceptowano' : 'Zaakceptuj strój'}

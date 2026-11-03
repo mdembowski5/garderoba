@@ -16,6 +16,8 @@ export interface RecommendOptions {
   preference: DayPreference;
   /** Okazja (domyślnie „Zwykły dzień”). */
   occasion?: Occasion;
+  /** Przypięte (zablokowane) elementy, które mają pozostać w zestawie przy losowaniu. */
+  locked?: Partial<Record<Category, ClothingItem>>;
   /** Ziarno generatora losowego – ten sam seed i dane wejściowe dają ten sam strój. */
   seed?: number;
   /** Sygnatury już pokazanych zestawów (przycisk „Losuj inny zestaw”). */
@@ -55,7 +57,7 @@ const tempFit = (item: ClothingItem, target: TempRange) =>
 
 const DAY = 24 * 3600 * 1000;
 const wornFactor = (item: ClothingItem, now: number) =>
-  item.lastWornAt && now - item.lastWornAt < 2 * DAY ? 0.4 : 1;
+  (item.lastWornAt && now - item.lastWornAt < 2 * DAY ? 0.4 : 1) * (item.isFavorite ? 1.25 : 1);
 
 type AccessoryKind = 'sunglasses' | 'watch' | 'jewelry' | 'other';
 export function accessoryKind(item: ClothingItem): AccessoryKind {
@@ -75,8 +77,23 @@ function metalOf(item: ClothingItem): 'silver' | 'gold' | undefined {
 
 const TEMP_NEUTRAL_KINDS: AccessoryKind[] = ['sunglasses', 'watch', 'jewelry'];
 
+/** Odrzuca ubrania będące w praniu (z awaryjnym fallbackiem, jeśli wszystko w danej kategorii jest w praniu). */
+function cleanPool(list: ClothingItem[], notes?: string[], label?: string): ClothingItem[] {
+  const clean = list.filter((i) => !i.inLaundry);
+  if (clean.length > 0 || list.length === 0) return clean;
+  if (notes && label) {
+    notes.push(`Wszystkie ${label} są w praniu – użyto ubrania z kosza na pranie.`);
+  }
+  return list;
+}
+
 /** Najbliższe dopasowanie do temperatury: elementy w odległości ≤ 1 przedziału, a w razie braku – najbliższe. */
-function tempPool(list: ClothingItem[], target: TempRange, notes: string[], label: string): ClothingItem[] {
+function tempPool(
+  list: ClothingItem[],
+  target: TempRange,
+  notes: string[],
+  label: string
+): ClothingItem[] {
   if (list.length === 0) return list;
   const min = Math.min(...list.map((i) => tempDistance(i.tempRange, target)));
   if (min <= 1) return list.filter((i) => tempDistance(i.tempRange, target) <= 1);
@@ -112,13 +129,12 @@ function pairLevel(pref: DayPreference, top: ClothingItem, bottom: ClothingItem)
   if (pref === 'light') {
     const bothBright = t !== 'dark' && b !== 'dark';
     if (!bothBright) return 0;
-    return t === 'light' || b === 'light' ? 2 : 1; // jasny akcent
+    return t === 'light' || b === 'light' ? 2 : 1;
   }
   if (pref === 'dark') {
     if (t !== 'dark' && b !== 'dark') return 0;
-    return isVivid(top.colorHex) || isVivid(bottom.colorHex) ? 1 : 2; // brak jaskrawych dominant
+    return isVivid(top.colorHex) || isVivid(bottom.colorHex) ? 1 : 2;
   }
-  // any – kontrast walorowy lub monochromat
   const diff = Math.abs(rank(top) - rank(bottom));
   if (diff === 2 || top.dominantColor === bottom.dominantColor) return 2;
   return diff === 1 ? 1 : 0;
@@ -139,11 +155,61 @@ function onepieceLevel(pref: DayPreference, item: ClothingItem): 0 | 1 | 2 {
   return 2;
 }
 
-/** Miękka korekta wagi pojedynczego elementu (buty, okrycie, torebka) względem preferencji dnia. */
 function prefFactor(pref: DayPreference, item: ClothingItem): number {
   if (pref === 'dark') return isVivid(item.colorHex) ? 0.25 : 1;
   if (pref === 'light') return item.brightnessType === 'dark' ? 0.7 : 1;
   return 1;
+}
+
+export function computeOutfitScore(outfit: {
+  top?: ClothingItem;
+  bottom?: ClothingItem;
+  onepiece?: ClothingItem;
+  shoes?: ClothingItem;
+  outerwear?: ClothingItem;
+  bag?: ClothingItem;
+}): number {
+  const primaryColor = outfit.onepiece
+    ? outfit.onepiece.dominantColor
+    : outfit.top?.dominantColor ?? 'Czerń';
+  const secondaryColor = outfit.onepiece
+    ? outfit.onepiece.dominantColor
+    : outfit.bottom?.dominantColor ?? primaryColor;
+
+  const harmonies: number[] = [];
+  if (outfit.top && outfit.bottom) {
+    harmonies.push(colorHarmony(outfit.top.dominantColor, outfit.bottom.dominantColor));
+  } else {
+    harmonies.push(0.92);
+  }
+  if (outfit.shoes) harmonies.push(colorHarmony(outfit.shoes.dominantColor, secondaryColor));
+  if (outfit.outerwear) harmonies.push(colorHarmony(outfit.outerwear.dominantColor, primaryColor));
+  if (outfit.bag) harmonies.push(colorHarmony(outfit.bag.dominantColor, primaryColor));
+  return Math.round((harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100);
+}
+
+export function computeSignature(outfit: {
+  top?: ClothingItem;
+  bottom?: ClothingItem;
+  onepiece?: ClothingItem;
+  shoes?: ClothingItem;
+  outerwear?: ClothingItem;
+  bag?: ClothingItem;
+  accessories: ClothingItem[];
+}): string {
+  return [
+    outfit.top,
+    outfit.bottom,
+    outfit.onepiece,
+    outfit.shoes,
+    outfit.outerwear,
+    outfit.bag,
+    ...outfit.accessories,
+  ]
+    .filter(Boolean)
+    .map((i) => i!.id)
+    .sort()
+    .join('+');
 }
 
 // ---------- główny silnik ----------
@@ -179,10 +245,9 @@ export function recommendOutfit(
     };
   }
 
-  // Do 15 prób, aby ominąć już pokazane zestawy.
   let last: Outfit | undefined;
   for (let attempt = 0; attempt < 15; attempt++) {
-    const outfit = buildOutfit(items, weather, pref, occasion, rng, now);
+    const outfit = buildOutfit(items, weather, pref, occasion, options.locked, rng, now);
     last = outfit;
     if (!options.exclude || !options.exclude.has(outfit.signature)) break;
   }
@@ -211,29 +276,38 @@ function buildOutfit(
   weather: WeatherData,
   pref: DayPreference,
   occasion: Occasion,
+  locked: Partial<Record<Category, ClothingItem>> | undefined,
   rng: () => number,
   now: number
 ): Outfit {
   const notes: string[] = [];
   const target = tempRangeFor(weather.apparentTemperature);
   const wet = isWet(weather);
-  const byCat = (c: Category) => items.filter((i) => i.category === c);
+  const byCat = (c: Category, label?: string) =>
+    cleanPool(
+      items.filter((i) => i.category === c),
+      notes,
+      label
+    );
 
-  // ----- Baza stylizacji: (Góra + Dół) lub (Sukienka / Jednoczęściowe) -----
-  const allTops = byCat('top');
-  const allBottoms = byCat('bottom');
-  const allOnepieces = byCat('onepiece');
+  const allTops = byCat('top', 'góry');
+  const allBottoms = byCat('bottom', 'doły');
+  const allOnepieces = byCat('onepiece', 'sukienki');
+
+  const lockedTop = locked?.top;
+  const lockedBottom = locked?.bottom;
+  const lockedOnepiece = locked?.onepiece;
 
   const bases: BaseCandidate[] = [];
 
-  if (allTops.length > 0 && allBottoms.length > 0) {
-    const topPool = tempPool(occasionPool(allTops, occasion, notes, 'góry'), target, notes, 'góry');
-    const bottomPool = tempPool(
-      occasionPool(allBottoms, occasion, notes, 'dołu'),
-      target,
-      notes,
-      'dołu'
-    );
+  if (!lockedOnepiece && allTops.length > 0 && allBottoms.length > 0) {
+    const topPool = lockedTop
+      ? [lockedTop]
+      : tempPool(occasionPool(allTops, occasion, notes, 'góry'), target, notes, 'góry');
+    const bottomPool = lockedBottom
+      ? [lockedBottom]
+      : tempPool(occasionPool(allBottoms, occasion, notes, 'dołu'), target, notes, 'dołu');
+
     for (const top of topPool) {
       for (const bottom of bottomPool) {
         const h = colorHarmony(top.dominantColor, bottom.dominantColor);
@@ -250,13 +324,20 @@ function buildOutfit(
     }
   }
 
-  if (allOnepieces.length > 0) {
-    const onePool = tempPool(
-      occasionPool(allOnepieces, occasion, bases.length === 0 ? notes : undefined, 'sukienek'),
-      target,
-      bases.length === 0 ? notes : [],
-      'sukienek'
-    );
+  if (!lockedTop && !lockedBottom && allOnepieces.length > 0) {
+    const onePool = lockedOnepiece
+      ? [lockedOnepiece]
+      : tempPool(
+          occasionPool(
+            allOnepieces,
+            occasion,
+            bases.length === 0 ? notes : undefined,
+            'sukienek'
+          ),
+          target,
+          bases.length === 0 ? notes : [],
+          'sukienek'
+        );
     for (const op of onePool) {
       const occMatch = occasionsOf(op).includes(occasion) ? 1.15 : 0.35;
       const w = tempFit(op, target) * occMatch * wornFactor(op, now);
@@ -284,10 +365,8 @@ function buildOutfit(
     candidates = bases.filter(tiers[tierIndex]);
     if (candidates.length) break;
   }
-  if (tierIndex >= 1 && pref !== 'any') {
+  if (tierIndex >= 1 && pref !== 'any' && !lockedTop && !lockedBottom && !lockedOnepiece) {
     notes.push('Za mało ubrań pasujących idealnie do wybranej preferencji – złagodzono kryteria.');
-  } else if (tierIndex >= 1) {
-    notes.push('Za mało ubrań dających kontrast – złagodzono kryteria.');
   }
 
   const base = pickWeighted(candidates, (b) => b.h * b.h * b.w, rng)!;
@@ -301,10 +380,10 @@ function buildOutfit(
   // ----- Okrycie wierzchnie -----
   const allOuter = byCat('outerwear');
   const outerAll = occasionPool(allOuter, occasion);
-  let outerwear: ClothingItem | undefined;
+  let outerwear: ClothingItem | undefined = locked?.outerwear;
   const needOuter = wet || target === 'cool' || target === 'cold';
   const optionalOuter = target === 'mild' && rng() < 0.3;
-  if (outerAll.length && (needOuter || optionalOuter)) {
+  if (!outerwear && outerAll.length && (needOuter || optionalOuter)) {
     let pool = outerAll;
     if (wet) {
       const rainproof = outerAll.some((i) => i.isRainproof)
@@ -334,16 +413,16 @@ function buildOutfit(
         rng
       );
     }
-  } else if (needOuter && allOuter.length === 0) {
+  } else if (!outerwear && needOuter && allOuter.length === 0) {
     notes.push(
       wet ? 'Dodaj kurtkę przeciwdeszczową do szafy.' : 'Dodaj kurtkę lub płaszcz do szafy.'
     );
   }
 
   // ----- Buty -----
-  const shoesAll = byCat('shoes');
-  let shoes: ClothingItem | undefined;
-  if (shoesAll.length) {
+  const shoesAll = byCat('shoes', 'butów');
+  let shoes: ClothingItem | undefined = locked?.shoes;
+  if (!shoes && shoesAll.length) {
     let pool = tempPool(occasionPool(shoesAll, occasion, notes, 'butów'), target, notes, 'butów');
     if (wet) {
       const rainproof = pool.filter((i) => i.isRainproof);
@@ -361,14 +440,14 @@ function buildOutfit(
         wornFactor(s, now),
       rng
     );
-  } else {
+  } else if (!shoes) {
     notes.push('Dodaj buty do szafy, aby uzupełnić stylizację.');
   }
 
-  // ----- Torebka / Plecak (opcjonalnie, jeśli jest w szafie) -----
+  // ----- Torebka / Plecak -----
   const bagsAll = byCat('bag');
-  let bag: ClothingItem | undefined;
-  if (bagsAll.length) {
+  let bag: ClothingItem | undefined = locked?.bag;
+  if (!bag && bagsAll.length) {
     const bagPool = occasionPool(bagsAll, occasion);
     bag = pickWeighted(
       bagPool,
@@ -385,29 +464,12 @@ function buildOutfit(
   // ----- Dodatki (1–2) -----
   const accessories = pickAccessories(byCat('accessory'), weather, target, occasion, rng, now);
 
-  // ----- Ocena harmonii -----
-  const harmonies: number[] = [];
-  if (top && bottom) harmonies.push(colorHarmony(top.dominantColor, bottom.dominantColor));
-  else harmonies.push(0.92);
-  if (shoes) harmonies.push(colorHarmony(shoes.dominantColor, secondaryColor));
-  if (outerwear) harmonies.push(colorHarmony(outerwear.dominantColor, primaryColor));
-  if (bag) harmonies.push(colorHarmony(bag.dominantColor, primaryColor));
-  const score = Math.round((harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100);
-
-  const ids = [top, bottom, onepiece, shoes, outerwear, bag, ...accessories]
-    .filter(Boolean)
-    .map((i) => i!.id);
+  const partial = { top, bottom, onepiece, shoes, outerwear, bag, accessories };
   return {
-    top,
-    bottom,
-    onepiece,
-    shoes,
-    outerwear,
-    bag,
-    accessories,
+    ...partial,
     notes: Array.from(new Set(notes)),
-    score,
-    signature: ids.slice().sort().join('+'),
+    score: computeOutfitScore(partial),
+    signature: computeSignature(partial),
   };
 }
 
@@ -459,4 +521,139 @@ function pickAccessories(
     if (second) chosen.push(second);
   }
   return chosen;
+}
+
+/** Wymienia tylko jeden wybrany element stylizacji na kolejny najlepiej pasujący z szafy. */
+export function swapOutfitPiece(
+  current: Outfit,
+  category: Category,
+  items: ClothingItem[],
+  weather: WeatherData,
+  occasion: Occasion
+): Outfit | null {
+  const target = tempRangeFor(weather.apparentTemperature);
+  const currentItem =
+    category === 'top'
+      ? current.top
+      : category === 'bottom'
+      ? current.bottom
+      : category === 'onepiece'
+      ? current.onepiece
+      : category === 'shoes'
+      ? current.shoes
+      : category === 'outerwear'
+      ? current.outerwear
+      : category === 'bag'
+      ? current.bag
+      : undefined;
+
+  const candidates = cleanPool(items.filter((i) => i.category === category && i.id !== currentItem?.id));
+  if (candidates.length === 0) return null;
+
+  const anchorColor =
+    category === 'top'
+      ? current.bottom?.dominantColor ?? 'Czerń'
+      : current.onepiece?.dominantColor ?? current.top?.dominantColor ?? 'Czerń';
+
+  const rng = mulberry32(Date.now());
+  const picked = pickWeighted(
+    candidates,
+    (item) => {
+      const h = colorHarmony(item.dominantColor, anchorColor);
+      const occ = occasionsOf(item).includes(occasion) ? 1.2 : 0.5;
+      return h * h * tempFit(item, target) * occ;
+    },
+    rng
+  );
+  if (!picked) return null;
+
+  const next: Outfit = {
+    ...current,
+    top: category === 'top' ? picked : current.top,
+    bottom: category === 'bottom' ? picked : current.bottom,
+    onepiece: category === 'onepiece' ? picked : current.onepiece,
+    shoes: category === 'shoes' ? picked : current.shoes,
+    outerwear: category === 'outerwear' ? picked : current.outerwear,
+    bag: category === 'bag' ? picked : current.bag,
+  };
+  next.score = computeOutfitScore(next);
+  next.signature = computeSignature(next);
+  return next;
+}
+
+// ---------- Asystent pakowania walizki (Travel Capsule Generator) ----------
+
+export interface PackingListEntry {
+  item: ClothingItem;
+  role: string;
+}
+
+export interface PackingPlan {
+  entries: PackingListEntry[];
+  combinationsCount: number;
+}
+
+export function generatePackingList(
+  items: ClothingItem[],
+  days: number,
+  targetTemp: TempRange,
+  expectRain: boolean,
+  occasion: Occasion
+): PackingPlan {
+  const clean = items.filter((i) => !i.inLaundry);
+  const pool = clean.length > 0 ? clean : items;
+
+  const scoreItem = (item: ClothingItem, anchorColors: string[]) => {
+    const tFit = tempFit(item, targetTemp);
+    const oFit = occasionsOf(item).includes(occasion) ? 1.3 : 0.6;
+    const rainBoost = expectRain && item.isRainproof ? 1.6 : 1.0;
+    const favBoost = item.isFavorite ? 1.2 : 1.0;
+    const hAvg =
+      anchorColors.length > 0
+        ? anchorColors.reduce((s, c) => s + colorHarmony(item.dominantColor, c), 0) /
+          anchorColors.length
+        : 0.9;
+    return tFit * oFit * rainBoost * favBoost * (0.4 + 0.6 * hAvg);
+  };
+
+  const pickTopN = (cat: Category, count: number, anchors: string[]): ClothingItem[] => {
+    const list = pool.filter((i) => i.category === cat);
+    return [...list]
+      .sort((a, b) => scoreItem(b, anchors) - scoreItem(a, anchors))
+      .slice(0, count);
+  };
+
+  const bottomsCount = Math.min(4, Math.max(1, Math.ceil(days / 2.5)));
+  const topsCount = Math.min(7, Math.max(2, Math.ceil(days * 0.75)));
+  const onepieceCount = days >= 3 ? Math.min(2, Math.floor(days / 3)) : 1;
+  const shoesCount = days >= 4 ? 2 : 1;
+  const outerCount = expectRain || targetTemp === 'cool' || targetTemp === 'cold' ? (days >= 5 ? 2 : 1) : 1;
+
+  const chosenBottoms = pickTopN('bottom', bottomsCount, []);
+  const anchorColors = chosenBottoms.map((b) => b.dominantColor);
+
+  const chosenTops = pickTopN('top', topsCount, anchorColors);
+  const allAnchors = [...anchorColors, ...chosenTops.map((t) => t.dominantColor)];
+
+  const chosenOnepieces = pickTopN('onepiece', onepieceCount, allAnchors);
+  const chosenShoes = pickTopN('shoes', shoesCount, allAnchors);
+  const chosenOuter = pickTopN('outerwear', outerCount, allAnchors);
+  const chosenBags = pickTopN('bag', 1, allAnchors);
+  const chosenAcc = pickTopN('accessory', Math.min(3, Math.max(1, Math.ceil(days / 3))), allAnchors);
+
+  const entries: PackingListEntry[] = [
+    ...chosenTops.map((item) => ({ item, role: 'Góra bazowa' })),
+    ...chosenBottoms.map((item) => ({ item, role: 'Dół do łączenia' })),
+    ...chosenOnepieces.map((item) => ({ item, role: 'Gotowy strój 1-część.' })),
+    ...chosenOuter.map((item) => ({ item, role: item.isRainproof ? 'Ochrona przed deszczem' : 'Warstwa wierzchnia' })),
+    ...chosenShoes.map((item) => ({ item, role: 'Obuwie wyjazdowe' })),
+    ...chosenBags.map((item) => ({ item, role: 'Torebka / Bagaż podręczny' })),
+    ...chosenAcc.map((item) => ({ item, role: 'Dodatek' })),
+  ];
+
+  const pairCombos = chosenTops.length * chosenBottoms.length;
+  const combinationsCount =
+    (pairCombos + chosenOnepieces.length) * Math.max(1, chosenShoes.length);
+
+  return { entries, combinationsCount };
 }

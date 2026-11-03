@@ -26,6 +26,9 @@ export interface ClothingItem {
   occasions: Occasion[]; // do jakich okazji pasuje (może być kilka)
   createdAt: number;
   lastWornAt?: number; // ostatnie zaakceptowanie w stylizacji (do rotacji ubrań)
+  wearCount?: number; // ile razy założono ubranie
+  inLaundry?: boolean; // czy ubranie jest obecnie w praniu (wykluczone z losowania)
+  isFavorite?: boolean; // ulubione ubranie (lekki priorytet przy doborze)
 }
 
 export type NewClothingItem = Omit<ClothingItem, 'id' | 'createdAt' | 'lastWornAt'>;
@@ -35,6 +38,9 @@ export interface SavedOutfit {
   itemIds: string[];
   acceptedAt: number;
   apparentTemperature: number;
+  occasion?: Occasion;
+  score?: number;
+  isFavorite?: boolean;
 }
 
 export type WeatherKind =
