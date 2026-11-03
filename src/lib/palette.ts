@@ -50,9 +50,9 @@ export function paletteByName(name: string): PaletteColor | undefined {
   return PALETTE.find((p) => p.name === name);
 }
 
-// ---- Dopasowanie do najbliższego koloru palety (odległość w przestrzeni CIE Lab) ----
+// ---- Konwersja sRGB → CIE Lab i dopasowanie do palety ----
 
-function srgbToLab(r: number, g: number, b: number): [number, number, number] {
+export function srgbToLab(r: number, g: number, b: number): [number, number, number] {
   const lin = (c: number) => {
     const v = c / 255;
     return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
@@ -70,21 +70,69 @@ function srgbToLab(r: number, g: number, b: number): [number, number, number] {
   return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
 }
 
-const PALETTE_LAB = PALETTE.map((p) => ({ p, lab: srgbToLab(...hexToRgb(p.hex)) }));
+/**
+ * Punkty odniesienia dla realnych zdjęć ubrań (uwzględniają oświetlenie wnętrz,
+ * gdzie np. biała koszulka ma RGB ~215 zamiast 255, a czarna ~35).
+ */
+const PALETTE_ANCHORS: { name: string; rgb: [number, number, number] }[] = [
+  { name: 'Biel', rgb: [242, 242, 240] },
+  { name: 'Biel', rgb: [215, 215, 212] },
+  { name: 'Czerń', rgb: [22, 22, 24] },
+  { name: 'Czerń', rgb: [45, 45, 48] },
+  { name: 'Szarość', rgb: [135, 136, 138] },
+  { name: 'Szarość', rgb: [95, 97, 100] },
+  { name: 'Szarość', rgb: [170, 172, 174] },
+  { name: 'Beż', rgb: [214, 196, 165] },
+  { name: 'Beż', rgb: [192, 170, 135] },
+  { name: 'Granat', rgb: [28, 42, 74] },
+  { name: 'Granat', rgb: [42, 60, 102] },
+  { name: 'Błękit', rgb: [105, 162, 215] },
+  { name: 'Błękit', rgb: [70, 130, 195] },
+  { name: 'Zieleń', rgb: [75, 138, 82] },
+  { name: 'Zieleń', rgb: [55, 100, 62] },
+  { name: 'Czerwień', rgb: [192, 55, 45] },
+  { name: 'Czerwień', rgb: [155, 40, 48] },
+  { name: 'Brąz', rgb: [107, 74, 47] },
+  { name: 'Brąz', rgb: [135, 92, 58] },
+];
+
+const ANCHORS_LAB = PALETTE_ANCHORS.map((a) => ({
+  palette: paletteByName(a.name)!,
+  lab: srgbToLab(a.rgb[0], a.rgb[1], a.rgb[2]),
+}));
 
 export function nearestPaletteColor(r: number, g: number, b: number): PaletteColor {
-  const lab = srgbToLab(r, g, b);
-  let best = PALETTE_LAB[0];
+  const [L, a, bLab] = srgbToLab(r, g, b);
+  const chroma = Math.hypot(a, bLab);
+  const lum = luminance(r, g, b);
+
+  // Reguły dla barw achromatycznych w oświetleniu domowym
+  if (chroma < 8.5) {
+    if (lum >= 190) return paletteByName('Biel')!;
+    if (lum <= 52) return paletteByName('Czerń')!;
+    return paletteByName('Szarość')!;
+  }
+  if (lum <= 34 && chroma < 16) {
+    return paletteByName('Czerń')!;
+  }
+  if (lum >= 210 && chroma < 14) {
+    return paletteByName('Biel')!;
+  }
+
+  let best = ANCHORS_LAB[0].palette;
   let bestD = Infinity;
-  for (const entry of PALETTE_LAB) {
-    const d =
-      (entry.lab[0] - lab[0]) ** 2 + (entry.lab[1] - lab[1]) ** 2 + (entry.lab[2] - lab[2]) ** 2;
+  for (const entry of ANCHORS_LAB) {
+    const dL = entry.lab[0] - L;
+    const da = entry.lab[1] - a;
+    const db = entry.lab[2] - bLab;
+    // Większa waga dla składowych chromatycznych (a, b) niż dla samej jasności L
+    const d = (0.75 * dL) ** 2 + da ** 2 + db ** 2;
     if (d < bestD) {
       bestD = d;
-      best = entry;
+      best = entry.palette;
     }
   }
-  return best.p;
+  return best;
 }
 
 // ---- Harmonia barw ----

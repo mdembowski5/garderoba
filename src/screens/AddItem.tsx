@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, Droplets, ImagePlus, Loader2, RotateCcw } from 'lucide-react';
+import { Camera, Check, Droplets, ImagePlus, Loader2, Pipette, RotateCcw, Sparkles } from 'lucide-react';
 import type { BrightnessType, Category, Occasion, TempRange } from '../types';
 import { addItem } from '../lib/db';
-import { compressImage, type CompressedImage } from '../lib/image';
-import { analyzeImage, type ColorAnalysis } from '../lib/colorAnalysis';
+import { compressImage, removeBackgroundImage, type CompressedImage } from '../lib/image';
+import { analyzeImage, type ColorAnalysis, type Point2D } from '../lib/colorAnalysis';
 import { PALETTE, brightnessOfHex } from '../lib/palette';
 import {
   BRIGHTNESS_LABELS,
@@ -16,8 +16,10 @@ import {
 import { Chip, ColorDot, Segmented } from '../components/ui';
 
 interface Draft {
-  image: CompressedImage;
-  previewUrl: string;
+  original: CompressedImage;
+  originalUrl: string;
+  cutout: CompressedImage;
+  cutoutUrl: string;
   analysis: ColorAnalysis;
 }
 
@@ -40,6 +42,9 @@ export default function AddItem({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [useCutout, setUseCutout] = useState(true);
+  const [focusPoint, setFocusPoint] = useState<Point2D | null>(null);
+  const [refining, setRefining] = useState(false);
 
   const [category, setCategory] = useState<Category>('top');
   const [subCategory, setSubCategory] = useState(SUBCATEGORIES.top[0].label);
@@ -54,7 +59,10 @@ export default function AddItem({
 
   useEffect(() => {
     return () => {
-      if (draft) URL.revokeObjectURL(draft.previewUrl);
+      if (draft) {
+        URL.revokeObjectURL(draft.originalUrl);
+        URL.revokeObjectURL(draft.cutoutUrl);
+      }
     };
   }, [draft]);
 
@@ -85,6 +93,7 @@ export default function AddItem({
     setDraft(null);
     setError(null);
     setColorEdited(false);
+    setFocusPoint(null);
     chooseCategory('top');
   };
 
@@ -94,10 +103,20 @@ export default function AddItem({
     if (!file) return;
     setBusy(true);
     setError(null);
+    setFocusPoint(null);
     try {
-      const image = await compressImage(file);
-      const analysis = await analyzeImage(image.blob);
-      setDraft({ image, previewUrl: URL.createObjectURL(image.blob), analysis });
+      const original = await compressImage(file);
+      const [analysis, cutout] = await Promise.all([
+        analyzeImage(original.blob),
+        removeBackgroundImage(original.blob),
+      ]);
+      setDraft({
+        original,
+        originalUrl: URL.createObjectURL(original.blob),
+        cutout,
+        cutoutUrl: URL.createObjectURL(cutout.blob),
+        analysis,
+      });
       setColorName(analysis.paletteName);
       setColorHex(analysis.hex);
       setBrightness(analysis.brightness);
@@ -106,6 +125,36 @@ export default function AddItem({
       setError(err instanceof Error ? err.message : 'Nie udało się przetworzyć zdjęcia.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Kliknięcie w ubranie na zdjęciu: próbkuje kolor w tym miejscu i odświeża wycięcie tła. */
+  const onPickPointOnImage = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (!draft || refining) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.max(0.05, Math.min(0.95, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0.05, Math.min(0.95, (e.clientY - rect.top) / rect.height));
+    const point: Point2D = { x, y };
+    setFocusPoint(point);
+    setRefining(true);
+    try {
+      const [analysis, cutout] = await Promise.all([
+        analyzeImage(draft.original.blob, point),
+        removeBackgroundImage(draft.original.blob, point),
+      ]);
+      URL.revokeObjectURL(draft.cutoutUrl);
+      setDraft({
+        ...draft,
+        cutout,
+        cutoutUrl: URL.createObjectURL(cutout.blob),
+        analysis,
+      });
+      setColorName(analysis.paletteName);
+      setColorHex(analysis.hex);
+      setBrightness(analysis.brightness);
+      setColorEdited(false);
+    } finally {
+      setRefining(false);
     }
   };
 
@@ -119,9 +168,10 @@ export default function AddItem({
   const save = async () => {
     if (!draft || saving) return;
     setSaving(true);
+    const activeImage = useCutout ? draft.cutout : draft.original;
     try {
       await addItem({
-        imageBlob: draft.image.blob,
+        imageBlob: activeImage.blob,
         category,
         subCategory,
         tempRange: TEMP_IDS[tempIdx] as TempRange,
@@ -142,12 +192,14 @@ export default function AddItem({
   };
 
   const temp = TEMP_RANGES[tempIdx];
+  const activeImage = draft ? (useCutout ? draft.cutout : draft.original) : null;
+  const activePreviewUrl = draft ? (useCutout ? draft.cutoutUrl : draft.originalUrl) : '';
 
   return (
     <div className="scroll-area h-full px-4 pb-6 pt-safe">
       <header className="mb-4">
         <h1 className="text-2xl font-bold">Dodaj ubranie</h1>
-        <p className="text-sm text-ink-400">Zdjęcie zostanie zmniejszone i zapisane tylko na tym urządzeniu</p>
+        <p className="text-sm text-ink-400">Tło jest automatycznie ignorowane, a zdjęcie zapisywane w telefonie</p>
       </header>
 
       {/* Ukryte inputy: aparat (tylny) i galeria */}
@@ -168,9 +220,15 @@ export default function AddItem({
             disabled={busy}
             className="flex w-full flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-accent-500/50 bg-accent-500/10 py-14 active:bg-accent-500/20"
           >
-            {busy ? <Loader2 size={40} className="animate-spin text-accent-300" /> : <Camera size={40} className="text-accent-300" />}
-            <span className="text-lg font-semibold">{busy ? 'Przetwarzanie…' : 'Zrób zdjęcie'}</span>
-            <span className="text-xs text-ink-400">Najlepiej na jasnym, jednolitym tle</span>
+            {busy ? (
+              <Loader2 size={40} className="animate-spin text-accent-300" />
+            ) : (
+              <Camera size={40} className="text-accent-300" />
+            )}
+            <span className="text-lg font-semibold">
+              {busy ? 'Usuwanie tła i analiza koloru…' : 'Zrób zdjęcie'}
+            </span>
+            <span className="text-xs text-ink-400">Umieść ubranie na środku kadru – tło zostanie odcięte</span>
           </button>
           <button
             onClick={() => galleryRef.current?.click()}
@@ -184,31 +242,70 @@ export default function AddItem({
 
       {error && <div className="mt-3 rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-200">{error}</div>}
 
-      {draft && (
+      {draft && activeImage && (
         <div className="space-y-5">
           <div className="flex gap-4">
-            <div className="h-36 w-36 shrink-0 overflow-hidden rounded-2xl bg-ink-800">
-              <img src={draft.previewUrl} alt="Podgląd" className="h-full w-full object-cover" />
-            </div>
+            <button
+              type="button"
+              onClick={onPickPointOnImage}
+              title="Dotknij ubrania na zdjęciu, aby pobrać kolor z tego miejsca"
+              className="relative h-36 w-36 shrink-0 overflow-hidden rounded-2xl bg-ink-800 ring-1 ring-white/10"
+            >
+              <img src={activePreviewUrl} alt="Podgląd" className="h-full w-full object-cover" />
+              {focusPoint && (
+                <span
+                  className="pointer-events-none absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-md"
+                  style={{
+                    left: `${focusPoint.x * 100}%`,
+                    top: `${focusPoint.y * 100}%`,
+                    backgroundColor: colorHex,
+                  }}
+                />
+              )}
+              {refining && (
+                <span className="absolute inset-0 flex items-center justify-center bg-black/45">
+                  <Loader2 size={22} className="animate-spin text-white" />
+                </span>
+              )}
+              <span className="pointer-events-none absolute inset-x-1.5 bottom-1.5 flex items-center justify-center gap-1 rounded-lg bg-black/60 px-1.5 py-0.5 text-[10px] text-white/90 backdrop-blur-sm">
+                <Pipette size={10} /> Dotknij, by wskazać
+              </span>
+            </button>
+
             <div className="min-w-0 flex-1 space-y-1.5 text-sm">
               <div className="text-xs font-semibold uppercase tracking-wide text-ink-400">
-                {colorEdited ? 'Kolor (poprawiony)' : 'Wykryty kolor'}
+                {colorEdited
+                  ? 'Kolor (wybrany ręcznie)'
+                  : focusPoint
+                  ? 'Kolor ze wskazanego miejsca'
+                  : 'Wykryty kolor ubrania (bez tła)'}
               </div>
               <div className="flex items-center gap-2 text-base font-semibold">
                 <ColorDot hex={colorHex} size={18} /> {colorName}
               </div>
               <div className="text-ink-300">Jasność: {BRIGHTNESS_LABELS[brightness].toLowerCase()}</div>
-              <div className="text-[11px] text-ink-400">
-                {draft.image.mime.replace('image/', '').toUpperCase()} · {Math.round(draft.image.blob.size / 1024)} KB ·{' '}
-                {draft.image.width}×{draft.image.height}
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => setUseCutout((v) => !v)}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    useCutout ? 'bg-accent-500/25 text-accent-300 ring-1 ring-accent-400/40' : 'bg-ink-800 text-ink-300'
+                  }`}
+                >
+                  <Sparkles size={12} /> {useCutout ? 'Tło wycięte' : 'Oryginalne tło'}
+                </button>
               </div>
-              <button onClick={reset} className="mt-1 flex items-center gap-1 text-xs font-semibold text-accent-300">
+              <div className="text-[11px] text-ink-400">
+                {activeImage.mime.replace('image/', '').toUpperCase()} · {Math.round(activeImage.blob.size / 1024)} KB ·{' '}
+                {activeImage.width}×{activeImage.height}
+              </div>
+              <button onClick={reset} className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-accent-300">
                 <RotateCcw size={12} /> Inne zdjęcie
               </button>
             </div>
           </div>
 
-          <Field label="Kolor dominujący – popraw jednym kliknięciem">
+          <Field label="Kolor dominujący – popraw jednym kliknięciem lub dotknij ubrania na zdjęciu">
             <div className="flex flex-wrap gap-2.5">
               {PALETTE.map((p) => {
                 const active = p.name === colorName;
