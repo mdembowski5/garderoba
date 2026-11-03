@@ -161,7 +161,7 @@ export default function Dashboard({
   const empty = items && items.length === 0;
 
   return (
-    <div className="scroll-area h-full px-4 pb-6 pt-safe">
+    <div className="scroll-area h-full px-4 pb-12 pt-safe">
       <header className="mb-4">
         <h1 className="text-2xl font-bold">Dzisiejszy strój</h1>
         <p className="text-sm text-ink-400">Dobrany do pogody, okazji i harmonii barw</p>
@@ -229,23 +229,27 @@ export default function Dashboard({
               isSavedFavorite={savedFav}
               onSaveFavorite={handleSaveFavorite}
             />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
               <button
                 onClick={() => generate(false)}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-ink-800 py-3.5 font-semibold active:bg-ink-700"
+                className="flex min-w-0 items-center justify-center gap-1.5 rounded-2xl bg-ink-800 px-3 py-3.5 text-xs font-semibold active:bg-ink-700 sm:gap-2 sm:text-sm"
               >
-                <Shuffle size={18} /> Losuj inny zestaw
+                <Shuffle size={17} className="shrink-0" />
+                <span className="truncate">Losuj inny zestaw</span>
               </button>
               <button
                 onClick={accept}
                 disabled={accepted}
-                className={`flex items-center justify-center gap-2 rounded-2xl py-3.5 font-semibold transition-colors ${
+                className={`flex min-w-0 items-center justify-center gap-1.5 rounded-2xl px-3 py-3.5 text-xs font-semibold transition-colors sm:gap-2 sm:text-sm ${
                   accepted
                     ? 'bg-emerald-600/40 text-emerald-200'
                     : 'bg-accent-500 active:bg-accent-600'
                 }`}
               >
-                <Check size={18} /> {accepted ? 'Zaakceptowano' : 'Zaakceptuj strój'}
+                <Check size={17} className="shrink-0" />
+                <span className="truncate">
+                  {accepted ? 'Zaakceptowano' : 'Zaakceptuj strój'}
+                </span>
               </button>
             </div>
           </>

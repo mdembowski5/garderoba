@@ -223,12 +223,25 @@ export default function AddItem({
   const activePreviewUrl = draft ? (useCutout ? draft.cutoutUrl : draft.originalUrl) : '';
 
   return (
-    <div className="scroll-area h-full px-4 pb-6 pt-safe">
-      <header className="mb-4">
-        <h1 className="text-2xl font-bold">Dodaj ubranie</h1>
-        <p className="text-sm text-ink-400">
-          Tło jest wycinane automatycznie, a kolor i sylwetka rozpoznawane ze zdjęcia
-        </p>
+    <div className="scroll-area h-full px-4 pb-12 pt-safe">
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold">Dodaj ubranie</h1>
+          <p className="text-sm text-ink-400">
+            Tło jest wycinane automatycznie, a kolor i sylwetka rozpoznawane ze zdjęcia
+          </p>
+        </div>
+        {draft && (
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className=" flex shrink-0 items-center gap-1.5 rounded-2xl bg-accent-500 px-3.5 py-2.5 text-xs font-bold text-white shadow active:bg-accent-600 disabled:opacity-60 sm:text-sm"
+          >
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+            Zapisz
+          </button>
+        )}
       </header>
 
       {/* Ukryte inputy: aparat (tylny) i galeria */}

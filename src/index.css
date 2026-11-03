@@ -3,10 +3,15 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --app-height: 100dvh;
+  }
+
   html,
   body,
   #root {
-    height: 100%;
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
   }
 
   html {
@@ -54,7 +59,10 @@
     padding-top: max(env(safe-area-inset-top), 0.75rem);
   }
   .pb-safe {
-    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+    padding-bottom: max(env(safe-area-inset-bottom), 0.65rem);
+  }
+  .pb-safe-sheet {
+    padding-bottom: max( calc(env(safe-area-inset-bottom) + 0.5rem), 1rem );
   }
   .scroll-area {
     overflow-y: auto;

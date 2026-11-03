@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Cloud,
   CloudDrizzle,
@@ -83,7 +84,7 @@ export function Segmented<T extends string>({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(o.value)}
-            className={`flex-1 rounded-xl px-2 py-2 text-[13px] font-semibold transition-colors ${
+            className={`min-w-0 flex-1 truncate rounded-xl px-2 py-2 text-xs font-semibold transition-colors sm:text-[13px] ${
               active ? 'bg-accent-500 text-white shadow' : 'text-ink-300 active:bg-ink-700'
             }`}
           >
@@ -120,11 +121,13 @@ export function BottomSheet({
   open,
   title,
   onClose,
+  footer,
   children,
 }: {
   open: boolean;
   title?: string;
   onClose: () => void;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   useEffect(() => {
@@ -135,19 +138,47 @@ export function BottomSheet({
   }, [open, onClose]);
 
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end">
-      <div className="absolute inset-0 animate-fade-in bg-black/60" onClick={onClose} />
-      <div className="pb-safe relative max-h-[88%] animate-sheet-up overflow-y-auto rounded-t-3xl bg-ink-900 px-5 pt-3 shadow-2xl">
-        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-ink-600" />
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-bold">{title}</h2>
-          <button onClick={onClose} aria-label="Zamknij" className="rounded-full bg-ink-800 p-2 text-ink-300">
-            <X size={18} />
-          </button>
+
+  return createPortal(
+    <div
+      style={{ height: 'var(--app-height, 100dvh)' }}
+      className="fixed inset-x-0 top-0 z-[100] flex flex-col justify-end"
+    >
+      <div className="absolute inset-0 animate-fade-in bg-black/65" onClick={onClose} />
+      <div className="relative flex max-h-[86%] w-full max-w-lg animate-sheet-up flex-col overflow-hidden rounded-t-3xl bg-ink-900 shadow-2xl sm:mx-auto">
+        {/* Stały nagłówek arkusza */}
+        <div className="shrink-0 border-b border-white/10 px-4 pb-2.5 pt-2.5 sm:px-5">
+          <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-ink-600" />
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="truncate text-base font-bold sm:text-lg">{title}</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Zamknij"
+              className="shrink-0 rounded-full bg-ink-800 p-2 text-ink-300 active:bg-ink-700"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
-        {children}
+
+        {/* Przewijana zawartość */}
+        <div
+          className={`scroll-area min-h-0 flex-1 px-4 py-4 sm:px-5 ${
+            footer ? 'pb-6' : 'pb-safe-sheet'
+          }`}
+        >
+          {children}
+        </div>
+
+        {/* Przypięta dolna belka akcji (np. przycisk usuwania) */}
+        {footer && (
+          <div className="pb-safe-sheet shrink-0 border-t border-white/10 bg-ink-900/95 px-4 pt-3 backdrop-blur sm:px-5">
+            {footer}
+          </div>
+        )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

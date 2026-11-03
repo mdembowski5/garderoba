@@ -149,7 +149,7 @@ export default function Wardrobe({
   const tempInfo = (i: ClothingItem) => TEMP_RANGES.find((t) => t.id === i.tempRange)!;
 
   return (
-    <div className="scroll-area h-full pb-6 pt-safe">
+    <div className="scroll-area h-full pb-12 pt-safe">
       <header className="mb-3 flex items-end justify-between px-4">
         <div>
           <h1 className="text-2xl font-bold">Moja szafa</h1>
@@ -285,54 +285,106 @@ export default function Wardrobe({
         </div>
       )}
 
-      <BottomSheet open={!!selected} onClose={close} title={selected?.subCategory}>
+      <BottomSheet
+        open={!!selected}
+        onClose={close}
+        title={selected?.subCategory}
+        footer={
+          selected ? (
+            confirmDelete ? (
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="flex items-center justify-center rounded-2xl bg-ink-800 px-3 py-3 text-xs font-semibold text-ink-200 active:bg-ink-700 sm:text-sm"
+                >
+                  Anuluj
+                </button>
+                <button
+                  type="button"
+                  onClick={remove}
+                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-red-600 px-3 py-3 text-xs font-semibold text-white active:bg-red-700 sm:text-sm"
+                >
+                  <Trash2 size={16} className="shrink-0" /> Potwierdź usunięcie
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={remove}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-red-500/15 px-4 py-3 text-sm font-semibold text-red-300 active:bg-red-500/25"
+              >
+                <Trash2 size={17} className="shrink-0" /> Usuń z szafy
+              </button>
+            )
+          ) : undefined
+        }
+      >
         {selected && (
-          <div className="space-y-4 pb-3">
-            <div className="mx-auto aspect-square w-48 overflow-hidden rounded-2xl bg-ink-800">
-              <ItemImage item={selected} className="h-full w-full" />
+          <div className="space-y-4">
+            <div className="flex items-center gap-3.5">
+              <div className="aspect-square h-28 w-28 shrink-0 overflow-hidden rounded-2xl bg-ink-800">
+                <ItemImage item={selected} className="h-full w-full" />
+              </div>
+
+              <dl className="min-w-0 flex-1 space-y-1.5 text-xs sm:text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-400">Kolor</dt>
+                  <dd className="flex items-center gap-1.5 truncate font-medium">
+                    <ColorDot hex={selected.colorHex} /> {selected.dominantColor}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-400">Jasność</dt>
+                  <dd className="truncate">{BRIGHTNESS_LABELS[selected.brightnessType]}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-400">Pogoda</dt>
+                  <dd className="truncate">
+                    {tempInfo(selected).label} ({tempInfo(selected).hint})
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-400">Założono</dt>
+                  <dd>{selected.wearCount ?? 0} razy</dd>
+                </div>
+              </dl>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 type="button"
                 onClick={toggleItemFavorite}
-                className={`flex items-center justify-center gap-2 rounded-2xl py-2.5 text-xs font-semibold transition-colors ${
+                className={`flex min-w-0 items-center justify-center gap-1.5 rounded-2xl px-3 py-2.5 text-center text-xs font-semibold leading-tight transition-colors ${
                   selected.isFavorite
                     ? 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-400/40'
                     : 'bg-ink-800 text-ink-300'
                 }`}
               >
-                <Heart size={15} fill={selected.isFavorite ? 'currentColor' : 'none'} />
-                {selected.isFavorite ? 'Ulubione' : 'Dodaj do ulubionych'}
+                <Heart
+                  size={15}
+                  className="shrink-0"
+                  fill={selected.isFavorite ? 'currentColor' : 'none'}
+                />
+                <span className="truncate">
+                  {selected.isFavorite ? 'Ulubione' : 'Do ulubionych'}
+                </span>
               </button>
               <button
                 type="button"
                 onClick={toggleItemLaundry}
-                className={`flex items-center justify-center gap-2 rounded-2xl py-2.5 text-xs font-semibold transition-colors ${
+                className={`flex min-w-0 items-center justify-center gap-1.5 rounded-2xl px-3 py-2.5 text-center text-xs font-semibold leading-tight transition-colors ${
                   selected.inLaundry
                     ? 'bg-amber-500/25 text-amber-200 ring-1 ring-amber-400/40'
                     : 'bg-ink-800 text-ink-300'
                 }`}
               >
-                <WashingMachine size={15} />
-                {selected.inLaundry ? 'W praniu (dotknij = czyste)' : 'Wrzuć do prania'}
+                <WashingMachine size={15} className="shrink-0" />
+                <span className="truncate">
+                  {selected.inLaundry ? 'Oznacz jako czyste' : 'Wrzuć do prania'}
+                </span>
               </button>
             </div>
-
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-              <dt className="text-ink-400">Kolor</dt>
-              <dd className="flex items-center gap-2 font-medium">
-                <ColorDot hex={selected.colorHex} /> {selected.dominantColor}
-              </dd>
-              <dt className="text-ink-400">Jasność</dt>
-              <dd>{BRIGHTNESS_LABELS[selected.brightnessType]}</dd>
-              <dt className="text-ink-400">Temperatura</dt>
-              <dd>
-                {tempInfo(selected).label} ({tempInfo(selected).hint})
-              </dd>
-              <dt className="text-ink-400">Założono</dt>
-              <dd>{selected.wearCount ?? 0} razy</dd>
-            </dl>
 
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
@@ -368,7 +420,7 @@ export default function Wardrobe({
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
                 Zmień kolor
               </div>
-              <div className="grid grid-cols-5 gap-y-2.5 gap-x-2">
+              <div className="grid grid-cols-5 gap-x-1.5 gap-y-2.5">
                 {PALETTE.map((p) => {
                   const active = p.name === selected.dominantColor;
                   return (
@@ -376,7 +428,7 @@ export default function Wardrobe({
                       key={p.name}
                       type="button"
                       onClick={() => changeColor(p.name, p.hex)}
-                      className="flex flex-col items-center gap-1"
+                      className="flex min-w-0 flex-col items-center gap-1"
                     >
                       <span
                         className={`h-8 w-8 rounded-full ring-offset-2 ring-offset-ink-900 ${
@@ -413,16 +465,6 @@ export default function Wardrobe({
                 ))}
               </div>
             </div>
-
-            <button
-              onClick={remove}
-              className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 font-semibold transition-colors ${
-                confirmDelete ? 'bg-red-600 text-white' : 'bg-red-500/15 text-red-300'
-              }`}
-            >
-              <Trash2 size={18} />{' '}
-              {confirmDelete ? 'Dotknij ponownie, aby usunąć' : 'Usuń z szafy'}
-            </button>
           </div>
         )}
       </BottomSheet>

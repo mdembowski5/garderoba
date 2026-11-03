@@ -20,7 +20,7 @@ export default function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab)
             <button
               key={id}
               onClick={() => onChange(id)}
-              className={`flex w-20 flex-col items-center gap-0.5 py-1 text-[11px] font-medium ${
+              className={`flex min-w-0 flex-1 flex-col items-center gap-0.5 py-1 text-[11px] font-medium ${
                 active ? 'text-accent-300' : 'text-ink-400'
               }`}
             >

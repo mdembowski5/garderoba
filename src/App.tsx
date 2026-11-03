@@ -20,11 +20,33 @@ export default function App() {
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
+  // Synchronizacja wysokości z widocznym obszarem ekranu (iOS Safari / pasek adresu / Android)
+  useEffect(() => {
+    const syncHeight = () => {
+      const h = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty('--app-height', `${Math.round(h)}px`);
+    };
+    syncHeight();
+    window.addEventListener('resize', syncHeight);
+    window.addEventListener('orientationchange', syncHeight);
+    window.visualViewport?.addEventListener('resize', syncHeight);
+    window.visualViewport?.addEventListener('scroll', syncHeight);
+    return () => {
+      window.removeEventListener('resize', syncHeight);
+      window.removeEventListener('orientationchange', syncHeight);
+      window.visualViewport?.removeEventListener('resize', syncHeight);
+      window.visualViewport?.removeEventListener('scroll', syncHeight);
+    };
+  }, []);
+
   // Ekrany pozostają zamontowane (zachowują stan formularza i wylosowany zestaw) – ukrywamy nieaktywne.
   const screen = (id: Tab) => `absolute inset-0 ${tab === id ? '' : 'hidden'}`;
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-ink-950 font-sans text-slate-100">
+    <div
+      style={{ height: 'var(--app-height, 100dvh)' }}
+      className="fixed inset-x-0 top-0 flex flex-col overflow-hidden bg-ink-950 font-sans text-slate-100"
+    >
       <main className="relative min-h-0 flex-1">
         <div className={screen('home')}>
           <Dashboard weatherState={weatherState} onNavigate={setTab} notify={notify} />

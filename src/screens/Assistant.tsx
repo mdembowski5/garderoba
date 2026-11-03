@@ -48,7 +48,7 @@ export default function Assistant({ notify }: { notify: (msg: string) => void })
     useLiveQuery(() => db.outfits.orderBy('acceptedAt').reverse().toArray(), []) ?? [];
 
   return (
-    <div className="scroll-area h-full px-4 pb-6 pt-safe">
+    <div className="scroll-area h-full px-4 pb-12 pt-safe">
       <header className="mb-4">
         <h1 className="text-2xl font-bold">Asystent szafy</h1>
         <p className="text-sm text-ink-400">
