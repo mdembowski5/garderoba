@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Check, Plus, Shirt, Shuffle } from 'lucide-react';
+import { Check, Loader2, Plus, Shirt, Shuffle, Sparkles } from 'lucide-react';
 import type { Category, ClothingItem, DayPreference, Occasion, RecommendResult } from '../types';
 import { acceptOutfit, db, saveFavoriteOutfit } from '../lib/db';
 import { recommendOutfit, swapOutfitPiece } from '../lib/outfit';
+import { seedDemoWardrobe } from '../lib/demoWardrobe';
 import { OCCASIONS, PREFERENCE_LABELS } from '../lib/constants';
 import type { WeatherState } from '../hooks/useWeather';
 import WeatherCard from '../components/WeatherCard';
@@ -44,6 +45,7 @@ export default function Dashboard({
   const [result, setResult] = useState<RecommendResult | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [savedFav, setSavedFav] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [locked, setLocked] = useState<Partial<Record<Category, ClothingItem>>>({});
 
   const seen = useRef<Set<string>>(new Set());
@@ -143,6 +145,19 @@ export default function Dashboard({
     notify('Strój zaakceptowany – miłego dnia! ✨');
   };
 
+  const handleSeedDemo = async () => {
+    if (seeding) return;
+    setSeeding(true);
+    try {
+      const count = await seedDemoWardrobe();
+      notify(`Załadowano testową szafę (${count} ubrań) ✨`);
+    } catch {
+      notify('Nie udało się wygenerować szafy testowej');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const empty = items && items.length === 0;
 
   return (
@@ -175,14 +190,32 @@ export default function Dashboard({
             <Shirt size={36} className="mx-auto mb-3 text-accent-400" />
             <h2 className="font-bold">Twoja szafa jest pusta</h2>
             <p className="mt-1 text-sm text-ink-400">
-              Dodaj kilka ubrań (góra, dół lub sukienka, buty), aby otrzymać pierwszą stylizację.
+              Dodaj własne ubrania lub jednym kliknięciem załaduj gotową szafę testową (27 ubrań),
+              aby przetestować działanie aplikacji.
             </p>
-            <button
-              onClick={() => onNavigate('add')}
-              className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
-            >
-              <Plus size={18} /> Dodaj ubranie
-            </button>
+            <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+              <button
+                onClick={() => onNavigate('add')}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
+              >
+                <Plus size={18} /> Dodaj ubranie
+              </button>
+              <button
+                onClick={handleSeedDemo}
+                disabled={seeding}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-5 py-3 font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+              >
+                {seeding ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" /> Generowanie szafy...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={18} /> Załaduj szafę testową (27)
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         ) : !weather ? (
           <div className="h-64 animate-pulse rounded-3xl bg-ink-900" />
@@ -219,12 +252,29 @@ export default function Dashboard({
         ) : result && !result.ok ? (
           <div className="rounded-3xl bg-ink-900 p-6 text-center">
             <p className="text-sm text-ink-300">{result.message}</p>
-            <button
-              onClick={() => onNavigate('add')}
-              className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
-            >
-              <Plus size={18} /> Dodaj ubranie
-            </button>
+            <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+              <button
+                onClick={() => onNavigate('add')}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
+              >
+                <Plus size={18} /> Dodaj ubranie
+              </button>
+              <button
+                onClick={handleSeedDemo}
+                disabled={seeding}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-5 py-3 font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+              >
+                {seeding ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" /> Generowanie...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={18} /> Załaduj szafę testową (27)
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

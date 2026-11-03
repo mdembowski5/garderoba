@@ -32,7 +32,7 @@ export function loadImage(source: Blob): Promise<HTMLImageElement> {
 
 let webpSupport: boolean | undefined;
 /** Safari nie potrafi kodować WebP w canvasie (zwraca PNG) – wykrywamy to jednorazowo. */
-function canEncodeWebp(): boolean {
+export function canEncodeWebp(): boolean {
   if (webpSupport === undefined) {
     const c = document.createElement('canvas');
     c.width = c.height = 1;
@@ -41,7 +41,7 @@ function canEncodeWebp(): boolean {
   return webpSupport;
 }
 
-function toBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
+export function toBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error('Kompresja zdjęcia nie powiodła się.'))),
@@ -67,18 +67,18 @@ function drawScaled(img: HTMLImageElement, width: number, height: number): HTMLC
     cw = step.width;
     ch = step.height;
   }
-  const out = document.createElement('canvas'); // niewidoczny – nigdy nie trafia do DOM
+  const out = document.createElement('canvas');
   out.width = width;
   out.height = height;
   const ctx = out.getContext('2d')!;
-  ctx.fillStyle = '#ffffff'; // JPEG nie ma przezroczystości
+  ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, width, height);
   return out;
 }
 
-async function encodeCanvasToBudget(canvas: HTMLCanvasElement): Promise<CompressedImage> {
+export async function encodeCanvasToBudget(canvas: HTMLCanvasElement): Promise<CompressedImage> {
   const type = canEncodeWebp() ? 'image/webp' : 'image/jpeg';
   let current = canvas;
   let best: CompressedImage | undefined;
@@ -112,8 +112,8 @@ export async function compressImage(file: Blob): Promise<CompressedImage> {
 }
 
 /**
- * Automatyczne wycinanie tła ze zdjęcia ubrania (Client-Side Edge-Guided Cutout).
- * Zastępuje wykryte tło czystym studyjnym tłem dopasowanym do kart aplikacji.
+ * Automatyczne wycinanie tła ze zdjęcia ubrania (GrabCut-like + Guided Edge Matting + Color Decontamination).
+ * Zastępuje wykryte tło czystym studyjnym tłem dopasowanym do kart aplikacji bez jasnej obwódki ("halo").
  */
 export async function removeBackgroundImage(
   source: Blob,
@@ -123,10 +123,10 @@ export async function removeBackgroundImage(
   const width = img.naturalWidth;
   const height = img.naturalHeight;
 
-  // 1. Szybka segmentacja na siatce maks. 110×110 px
-  const segRatio = Math.min(1, 110 / Math.max(width, height));
-  const segW = Math.max(16, Math.round(width * segRatio));
-  const segH = Math.max(16, Math.round(height * segRatio));
+  // 1. Segmentacja topologiczna na siatce maks. 128×128 px
+  const segRatio = Math.min(1, 128 / Math.max(width, height));
+  const segW = Math.max(24, Math.round(width * segRatio));
+  const segH = Math.max(24, Math.round(height * segRatio));
 
   const segCanvas = document.createElement('canvas');
   segCanvas.width = segW;
@@ -135,9 +135,9 @@ export async function removeBackgroundImage(
   segCtx.imageSmoothingQuality = 'high';
   segCtx.drawImage(img, 0, 0, segW, segH);
   const segData = segCtx.getImageData(0, 0, segW, segH).data;
-  const { mask, bgLabs, fgLab } = segmentGarment(segData, segW, segH, focusPoint);
+  const { mask, bgLabs, fgLabs } = segmentGarment(segData, segW, segH, focusPoint);
 
-  // 2. Nałożenie maski w pełnej rozdzielczości ze wspomaganiem krawędziowym (Guided Feathering)
+  // 2. Nałożenie maski w pełnej rozdzielczości ze wspomaganiem krawędziowym i odkażaniem barwy brzegu
   const outCanvas = document.createElement('canvas');
   outCanvas.width = width;
   outCanvas.height = height;
@@ -145,6 +145,30 @@ export async function removeBackgroundImage(
   ctx.drawImage(img, 0, 0, width, height);
   const imgData = ctx.getImageData(0, 0, width, height);
   const px = imgData.data;
+
+  // Średni kolor wnętrza ubrania do odkażania krawędzi (usuwania jasnej poświaty tła na brzegu)
+  let fgMeanR = 120;
+  let fgMeanG = 120;
+  let fgMeanB = 120;
+  {
+    let sr = 0;
+    let sg = 0;
+    let sb = 0;
+    let cnt = 0;
+    for (let i = 0; i < segW * segH; i++) {
+      if (mask[i] > 0.85) {
+        sr += segData[i * 4];
+        sg += segData[i * 4 + 1];
+        sb += segData[i * 4 + 2];
+        cnt++;
+      }
+    }
+    if (cnt > 0) {
+      fgMeanR = sr / cnt;
+      fgMeanG = sg / cnt;
+      fgMeanB = sb / cnt;
+    }
+  }
 
   const scaleX = (segW - 1) / Math.max(1, width - 1);
   const scaleY = (segH - 1) / Math.max(1, height - 1);
@@ -174,23 +198,38 @@ export async function removeBackgroundImage(
         m11 * fx * fy;
 
       const idx = (y * width + x) * 4;
-      const r = px[idx];
-      const g = px[idx + 1];
-      const b = px[idx + 2];
+      let r = px[idx];
+      let g = px[idx + 1];
+      let b = px[idx + 2];
 
-      // Wyostrzanie krawędzi na pełnej rozdzielczości w strefie przejściowej
-      if (alpha > 0.05 && alpha < 0.95 && bgLabs.length > 0) {
+      // Doprecyzowanie krawędzi na pełnej rozdzielczości w wąskim pasmie brzegowym
+      if (alpha > 0.08 && alpha < 0.92 && bgLabs.length > 0 && fgLabs.length > 0) {
         const [l, aLab, bLab] = srgbToLab(r, g, b);
         let dBg = Infinity;
         for (const bg of bgLabs) {
           const d = shadowAwareLabDist(l, aLab, bLab, bg[0], bg[1], bg[2]);
           if (d < dBg) dBg = d;
         }
-        const dFg = shadowAwareLabDist(l, aLab, bLab, fgLab[0], fgLab[1], fgLab[2]);
-        const colorAffinity = dBg / (dBg + dFg + 0.001);
-        alpha = Math.max(0, Math.min(1, alpha * 0.55 + colorAffinity * 0.45));
-        // Kontrastowe przejście na samym brzegu ubrania
-        alpha = Math.max(0, Math.min(1, (alpha - 0.25) / 0.55));
+        let dFg = Infinity;
+        for (const fg of fgLabs) {
+          const d = shadowAwareLabDist(l, aLab, bLab, fg[0], fg[1], fg[2]);
+          if (d < dFg) dFg = d;
+        }
+        const affinity = dBg / (dBg + dFg + 0.001);
+        alpha = alpha * 0.62 + affinity * 0.38;
+        // Gładka krzywa S (smoothstep) zapewniająca czysty, antyaliasowany brzeg
+        const t = Math.max(0, Math.min(1, (alpha - 0.28) / 0.52));
+        alpha = t * t * (3 - 2 * t);
+
+        // Odkażanie koloru brzegu (Color Decontamination) – eliminuje jasną obwódkę wokół ciemnych ubrań
+        if (alpha > 0.05 && alpha < 0.85) {
+          const pull = (1 - alpha) * 0.45;
+          r = Math.round(r * (1 - pull) + fgMeanR * pull);
+          g = Math.round(g * (1 - pull) + fgMeanG * pull);
+          b = Math.round(b * (1 - pull) + fgMeanB * pull);
+        }
+      } else {
+        alpha = alpha >= 0.5 ? 1 : 0;
       }
 
       if (alpha < 0.999) {

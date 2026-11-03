@@ -9,6 +9,8 @@ import {
   Download,
   Droplets,
   Heart,
+  Loader2,
+  Sparkles,
   Square,
   Trash2,
   Upload,
@@ -21,6 +23,7 @@ import {
   importWardrobeBackup,
   toggleSavedOutfitFavorite,
 } from '../lib/db';
+import { clearAllWardrobe, seedDemoWardrobe } from '../lib/demoWardrobe';
 import {
   CATEGORY_LABELS,
   OCCASIONS,
@@ -329,6 +332,36 @@ function StatsAndBackupView({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const handleSeedDemo = async () => {
+    if (seeding || busy) return;
+    setSeeding(true);
+    try {
+      const count = await seedDemoWardrobe();
+      notify(`Załadowano testową szafę (${count} ubrań) ✨`);
+    } catch {
+      notify('Błąd podczas ładowania szafy testowej');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await clearAllWardrobe();
+      setConfirmClear(false);
+      notify('Wyczyszczono całą szafę i historię');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const colorStats = useMemo(() => {
     const map = new Map<string, { name: string; hex: string; count: number }>();
@@ -532,6 +565,48 @@ function StatsAndBackupView({
           >
             <Upload size={16} /> Importuj z pliku
           </button>
+        </div>
+      </section>
+
+      {/* Szafa testowa (Demo) */}
+      <section className="rounded-3xl bg-ink-900 p-4">
+        <h2 className="flex items-center gap-2 text-base font-bold">
+          <Sparkles size={18} className="text-accent-400" /> Szafa testowa (Demo)
+        </h2>
+        <p className="mt-1 text-xs text-ink-400">
+          Załaduj 27 gotowych, wyrenderowanych ubrań (góra, dół, sukienki, okrycia, buty, torebki i
+          dodatki na każdą pogodę i okazję), aby od razu przetestować wszystkie funkcje aplikacji.
+        </p>
+        <div className="mt-3 flex flex-col gap-2.5 sm:flex-row">
+          <button
+            onClick={handleSeedDemo}
+            disabled={seeding || busy}
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-accent-500/20 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-accent-500/30 disabled:opacity-50"
+          >
+            {seeding ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> Generowanie 27 ubrań...
+              </>
+            ) : (
+              <>
+                <Sparkles size={16} /> Załaduj szafę testową (27 ubrań)
+              </>
+            )}
+          </button>
+          {items.length > 0 && (
+            <button
+              onClick={handleClearAll}
+              disabled={busy || seeding}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-2xl py-3 text-xs font-semibold transition-colors ${
+                confirmClear
+                  ? 'bg-red-600 text-white'
+                  : 'bg-red-500/15 text-red-300 active:bg-red-500/25'
+              }`}
+            >
+              <Trash2 size={16} />
+              {confirmClear ? 'Dotknij ponownie, aby wyczyścić' : 'Wyczyść całą szafę'}
+            </button>
+          )}
         </div>
       </section>
     </div>

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Droplets, Heart, Plus, Sparkles, Trash2, WashingMachine } from 'lucide-react';
+import { Droplets, Heart, Loader2, Plus, Sparkles, Trash2, WashingMachine } from 'lucide-react';
 import type { BrightnessType, Category, ClothingItem, Occasion } from '../types';
 import { clearLaundry, db, deleteItem, updateItem } from '../lib/db';
+import { seedDemoWardrobe } from '../lib/demoWardrobe';
 import {
   BRIGHTNESS_LABELS,
   CATEGORY_EMOJIS,
@@ -33,6 +34,20 @@ export default function Wardrobe({
   const [occ, setOcc] = useState<OccFilter>('all');
   const [selected, setSelected] = useState<ClothingItem | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+
+  const handleSeedDemo = async () => {
+    if (seeding) return;
+    setSeeding(true);
+    try {
+      const count = await seedDemoWardrobe();
+      notify(`Załadowano testową szafę (${count} ubrań) ✨`);
+    } catch {
+      notify('Nie udało się wygenerować szafy testowej');
+    } finally {
+      setSeeding(false);
+    }
+  };
 
   const filtered = useMemo(
     () =>
@@ -202,12 +217,29 @@ export default function Wardrobe({
               : 'Brak ubrań dla wybranych filtrów.'}
           </p>
           {items.length === 0 && (
-            <button
-              onClick={() => onNavigate('add')}
-              className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
-            >
-              <Plus size={18} /> Dodaj pierwsze ubranie
-            </button>
+            <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+              <button
+                onClick={() => onNavigate('add')}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
+              >
+                <Plus size={18} /> Dodaj pierwsze ubranie
+              </button>
+              <button
+                onClick={handleSeedDemo}
+                disabled={seeding}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-5 py-3 font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+              >
+                {seeding ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" /> Generowanie szafy...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={18} /> Załaduj szafę testową (27)
+                  </>
+                )}
+              </button>
+            </div>
           )}
         </div>
       ) : (
