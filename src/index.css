@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    background: #0b0f1a;
+    touch-action: pan-x pan-y; /* brak pinch-zoom / double-tap zoom */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    position: fixed; /* blokuje bounce-scroll całej strony na iOS */
+    inset: 0;
+    width: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: #0b0f1a;
+    color: #e8ecf4;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* 16px zapobiega automatycznemu powiększaniu strony przez iOS po fokusie pola */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  button {
+    touch-action: manipulation;
+  }
+
+  img {
+    -webkit-user-drag: none;
+  }
+}
+
+@layer utilities {
+  .pt-safe {
+    padding-top: max(env(safe-area-inset-top), 0.75rem);
+  }
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+  .scroll-area {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
