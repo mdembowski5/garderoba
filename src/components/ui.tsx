@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Cloud,
@@ -15,13 +15,34 @@ import {
 } from 'lucide-react';
 import type { ClothingItem, WeatherKind } from '../types';
 import { useObjectUrl } from '../hooks/useObjectUrl';
+import { renderFallbackIllustrationForItem } from '../lib/demoWardrobe';
 import { weatherKind } from '../lib/weather';
 
-/** Miniaturka ubrania z IndexedDB. */
+/** Miniaturka ubrania z IndexedDB (odporna na wygasanie Blob URL w iOS Safari). */
 export function ItemImage({ item, className = '' }: { item: ClothingItem; className?: string }) {
-  const url = useObjectUrl(item.imageBlob, item.id);
-  return url ? (
-    <img src={url} alt={item.subCategory} draggable={false} className={`object-cover ${className}`} />
+  const blobUrl = useObjectUrl(item.imageDataUrl ? undefined : item.imageBlob, item.id);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [item.id, item.imageDataUrl, item.colorHex, item.subCategory]);
+
+  const fallbackUrl = useMemo(() => {
+    if (item.imageDataUrl && !failed) return undefined;
+    if (blobUrl && !failed) return undefined;
+    return renderFallbackIllustrationForItem(item);
+  }, [item, blobUrl, failed]);
+
+  const src = (!failed && (item.imageDataUrl || blobUrl)) || fallbackUrl;
+
+  return src ? (
+    <img
+      src={src}
+      alt={item.subCategory}
+      draggable={false}
+      onError={() => setFailed(true)}
+      className={`object-cover ${className}`}
+    />
   ) : (
     <div className={`animate-pulse bg-ink-700 ${className}`} />
   );

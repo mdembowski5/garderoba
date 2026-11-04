@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import TabBar, { type Tab } from './components/TabBar';
 import Dashboard from './screens/Dashboard';
+import TryOn from './screens/TryOn';
 import AddItem from './screens/AddItem';
 import Wardrobe from './screens/Wardrobe';
 import Assistant from './screens/Assistant';
 import { useWeather } from './hooks/useWeather';
+import { repairWardrobeDatabase } from './lib/demoWardrobe';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
@@ -19,6 +21,11 @@ export default function App() {
   }, []);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  // Automatyczna naprawa bazy IndexedDB przy starcie (migracja Blob -> DataURL dla iOS Safari oraz korekta licznika demo)
+  useEffect(() => {
+    void repairWardrobeDatabase();
+  }, []);
 
   // Synchronizacja wysokości z widocznym obszarem ekranu (iOS Safari / pasek adresu / Android)
   useEffect(() => {
@@ -50,6 +57,9 @@ export default function App() {
       <main className="relative min-h-0 flex-1">
         <div className={screen('home')}>
           <Dashboard weatherState={weatherState} onNavigate={setTab} notify={notify} />
+        </div>
+        <div className={screen('tryon')}>
+          <TryOn onNavigate={setTab} notify={notify} />
         </div>
         <div className={screen('add')}>
           <AddItem onSaved={() => setTab('wardrobe')} notify={notify} />

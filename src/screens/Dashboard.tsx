@@ -1,15 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Check, Loader2, Plus, Shirt, Shuffle, Sparkles } from 'lucide-react';
-import type { Category, ClothingItem, DayPreference, Occasion, RecommendResult } from '../types';
+import { Check, Loader2, Palette, Plus, Shirt, Shuffle, Sparkles } from 'lucide-react';
+import type {
+  Category,
+  ClothingItem,
+  DayPreference,
+  Occasion,
+  PersonalColorProfile,
+  RecommendResult,
+} from '../types';
 import { acceptOutfit, db, saveFavoriteOutfit } from '../lib/db';
 import { recommendOutfit, swapOutfitPiece } from '../lib/outfit';
 import { seedDemoWardrobe } from '../lib/demoWardrobe';
 import { OCCASIONS, PREFERENCE_LABELS } from '../lib/constants';
+import {
+  EYE_COLORS,
+  HAIR_COLORS,
+  PERSONAL_PROFILE_EVENT,
+  SKIN_TONES,
+  loadPersonalProfile,
+  resolveColorSeason,
+  savePersonalProfile,
+} from '../lib/personalColor';
 import type { WeatherState } from '../hooks/useWeather';
 import WeatherCard from '../components/WeatherCard';
 import OutfitCard from '../components/OutfitCard';
-import { Chip, Segmented } from '../components/ui';
+import PersonalPaletteSheet from '../components/PersonalPaletteSheet';
+import { Chip, ColorDot, Segmented } from '../components/ui';
 import type { Tab } from '../components/TabBar';
 
 const PREF_KEY = 'garderoba.pref';
@@ -42,11 +59,20 @@ export default function Dashboard({
   const items = useLiveQuery(() => db.items.toArray(), []);
   const [pref, setPref] = useState<DayPreference>(loadPref);
   const [occasion, setOccasion] = useState<Occasion>(loadOccasion);
+  const [personalProfile, setPersonalProfile] =
+    useState<PersonalColorProfile>(loadPersonalProfile);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [result, setResult] = useState<RecommendResult | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [savedFav, setSavedFav] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [locked, setLocked] = useState<Partial<Record<Category, ClothingItem>>>({});
+
+  useEffect(() => {
+    const syncProfile = () => setPersonalProfile(loadPersonalProfile());
+    window.addEventListener(PERSONAL_PROFILE_EVENT, syncProfile);
+    return () => window.removeEventListener(PERSONAL_PROFILE_EVENT, syncProfile);
+  }, []);
 
   const seen = useRef<Set<string>>(new Set());
   const itemsRef = useRef(items);
@@ -65,6 +91,7 @@ export default function Dashboard({
       const r = recommendOutfit(list, w, {
         preference: pref,
         occasion,
+        personalProfile,
         locked: lockedRef.current,
         seed: Math.floor(Math.random() * 2 ** 32),
         exclude: seen.current,
@@ -77,7 +104,7 @@ export default function Dashboard({
       setAccepted(false);
       setSavedFav(false);
     },
-    [pref, occasion]
+    [pref, occasion, personalProfile]
   );
 
   const itemsKey = items
@@ -159,16 +186,61 @@ export default function Dashboard({
   };
 
   const empty = items && items.length === 0;
+  const season = resolveColorSeason(personalProfile);
+  const skinSwatch =
+    SKIN_TONES.find((s) => s.id === personalProfile.skinTone)?.swatchHex ?? '#ead0b8';
+  const hairSwatch =
+    HAIR_COLORS.find((h) => h.id === personalProfile.hairColor)?.swatchHex ?? '#7d6e63';
+  const eyeSwatch =
+    EYE_COLORS.find((e) => e.id === personalProfile.eyeColor)?.swatchHex ?? '#5b8ec9';
+
+  const handleProfileChange = (next: PersonalColorProfile) => {
+    setPersonalProfile(next);
+    savePersonalProfile(next);
+  };
 
   return (
     <div className="scroll-area h-full px-4 pb-12 pt-safe">
       <header className="mb-4">
         <h1 className="text-2xl font-bold">Dzisiejszy strój</h1>
-        <p className="text-sm text-ink-400">Dobrany do pogody, okazji i harmonii barw</p>
+        <p className="text-sm text-ink-400">
+          Dobrany do pogody, okazji, Twojej urody i harmonii barw
+        </p>
       </header>
 
       <div className="space-y-4">
         <WeatherCard state={weatherState} />
+
+        {/* Pasek osobistej palety barw (Skóra, Włosy, Oczy) */}
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          className="flex w-full items-center justify-between gap-2 rounded-2xl bg-ink-900 px-3.5 py-2.5 text-left ring-1 ring-white/10 active:bg-ink-800"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+              <Palette size={14} className="shrink-0 text-accent-400" />
+              <span className="truncate">
+                Paleta urody: {season.emoji} {season.name}
+                {!personalProfile.enabled ? ' (wył.)' : ''}
+              </span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-2.5 text-[11px] text-ink-400">
+              <span className="inline-flex items-center gap-1">
+                <ColorDot hex={skinSwatch} size={9} /> Skóra
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <ColorDot hex={hairSwatch} size={9} /> Włosy
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <ColorDot hex={eyeSwatch} size={9} /> Oczy
+              </span>
+            </div>
+          </div>
+          <span className="shrink-0 rounded-xl bg-accent-500/20 px-2.5 py-1 text-[11px] font-semibold text-accent-300">
+            Zmień
+          </span>
+        </button>
 
         <div>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
@@ -282,6 +354,13 @@ export default function Dashboard({
           </div>
         ) : null}
       </div>
+
+      <PersonalPaletteSheet
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        profile={personalProfile}
+        onChange={handleProfileChange}
+      />
     </div>
   );
 }

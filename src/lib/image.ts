@@ -9,9 +9,25 @@ const QUALITIES = [0.65, 0.55, 0.45, 0.36];
 
 export interface CompressedImage {
   blob: Blob;
+  dataUrl: string;
   width: number;
   height: number;
   mime: string;
+}
+
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string' && reader.result.startsWith('data:image/')) {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Nieprawidłowe dane obrazu'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Błąd odczytu obrazu'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function loadImage(source: Blob): Promise<HTMLImageElement> {
@@ -86,7 +102,14 @@ export async function encodeCanvasToBudget(canvas: HTMLCanvasElement): Promise<C
   for (let round = 0; round < 4; round++) {
     for (const q of QUALITIES) {
       const blob = await toBlob(current, type, q);
-      best = { blob, width: current.width, height: current.height, mime: blob.type || type };
+      const dataUrl = current.toDataURL(type, q);
+      best = {
+        blob,
+        dataUrl,
+        width: current.width,
+        height: current.height,
+        mime: blob.type || type,
+      };
       if (blob.size <= MAX_BYTES) return best;
     }
     const nextW = Math.max(1, Math.round(current.width * 0.85));

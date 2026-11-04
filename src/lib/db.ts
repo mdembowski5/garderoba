@@ -45,9 +45,21 @@ export function newId(): string {
 }
 
 export async function addItem(data: NewClothingItem): Promise<ClothingItem> {
+  let imageDataUrl = data.imageDataUrl;
+  if (!imageDataUrl && data.imageBlob) {
+    imageDataUrl = await blobToDataUrl(data.imageBlob);
+  }
   const item: ClothingItem = {
-    ...data,
     id: newId(),
+    imageDataUrl,
+    category: data.category,
+    subCategory: data.subCategory,
+    tempRange: data.tempRange,
+    isRainproof: Boolean(data.isRainproof),
+    dominantColor: data.dominantColor,
+    colorHex: data.colorHex,
+    brightnessType: data.brightnessType,
+    occasions: data.occasions?.length ? [...data.occasions] : ['casual'],
     createdAt: Date.now(),
     wearCount: 0,
     inLaundry: false,
@@ -61,8 +73,26 @@ export function deleteItem(id: string): Promise<void> {
   return db.items.delete(id);
 }
 
-export function updateItem(id: string, patch: Partial<ClothingItem>): Promise<number> {
-  return db.items.update(id, patch);
+export async function updateItem(id: string, patch: Partial<ClothingItem>): Promise<number> {
+  const existing = await db.items.get(id);
+  if (!existing) return 0;
+  let imageDataUrl = patch.imageDataUrl ?? existing.imageDataUrl;
+  if (!imageDataUrl && existing.imageBlob) {
+    try {
+      imageDataUrl = await blobToDataUrl(existing.imageBlob);
+    } catch {
+      imageDataUrl = undefined;
+    }
+  }
+  const updated: ClothingItem = {
+    ...existing,
+    ...patch,
+    id: existing.id,
+    imageDataUrl,
+  };
+  delete updated.imageBlob;
+  await db.items.put(updated);
+  return 1;
 }
 
 export function outfitItemIds(outfit: Outfit): string[] {
@@ -95,13 +125,17 @@ export async function acceptOutfit(
       score: outfit.score,
       isFavorite: false,
     });
-    await db.items
-      .where('id')
-      .anyOf(ids)
-      .modify((item: ClothingItem) => {
-        item.lastWornAt = now;
-        item.wearCount = (item.wearCount ?? 0) + 1;
-      });
+    for (const id of ids) {
+      const existing = await db.items.get(id);
+      if (!existing) continue;
+      const updated: ClothingItem = {
+        ...existing,
+        lastWornAt: now,
+        wearCount: (existing.wearCount ?? 0) + 1,
+      };
+      delete updated.imageBlob;
+      await db.items.put(updated);
+    }
   });
 }
 
@@ -133,9 +167,15 @@ export function toggleSavedOutfitFavorite(id: string, isFavorite: boolean): Prom
 
 /** Oznacza wszystkie ubrania z kosza na pranie jako czyste. */
 export async function clearLaundry(): Promise<void> {
-  await db.items.toCollection().modify((item: ClothingItem) => {
-    if (item.inLaundry) item.inLaundry = false;
+  const all = await db.items.toArray();
+  const dirty = all.filter((i) => i.inLaundry);
+  if (dirty.length === 0) return;
+  const cleaned = dirty.map((item) => {
+    const copy: ClothingItem = { ...item, inLaundry: false };
+    delete copy.imageBlob;
+    return copy;
   });
+  await db.items.bulkPut(cleaned);
 }
 
 // ---- Eksport / Import kopii zapasowej (JSON + Base64) ----
@@ -149,11 +189,6 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
-  const res = await fetch(dataUrl);
-  return res.blob();
-}
-
 export interface WardrobeBackupFile {
   version: 1;
   exportedAt: number;
@@ -164,9 +199,9 @@ export interface WardrobeBackupFile {
 export async function exportWardrobeBackup(): Promise<string> {
   const [items, outfits] = await Promise.all([db.items.toArray(), db.outfits.toArray()]);
   const serializedItems = await Promise.all(
-    items.map(async ({ imageBlob, ...rest }) => ({
+    items.map(async ({ imageBlob, imageDataUrl, ...rest }) => ({
       ...rest,
-      imageDataUrl: await blobToDataUrl(imageBlob),
+      imageDataUrl: imageDataUrl ?? (imageBlob ? await blobToDataUrl(imageBlob) : ''),
     }))
   );
   const payload: WardrobeBackupFile = {
@@ -183,12 +218,10 @@ export async function importWardrobeBackup(json: string): Promise<number> {
   if (!parsed || !Array.isArray(parsed.items)) {
     throw new Error('Nieprawidłowy plik kopii zapasowej.');
   }
-  const restoredItems: ClothingItem[] = await Promise.all(
-    parsed.items.map(async ({ imageDataUrl, ...rest }) => ({
-      ...rest,
-      imageBlob: await dataUrlToBlob(imageDataUrl),
-    }))
-  );
+  const restoredItems: ClothingItem[] = parsed.items.map(({ imageDataUrl, ...rest }) => ({
+    ...rest,
+    imageDataUrl,
+  }));
   await db.transaction('rw', db.items, db.outfits, async () => {
     await db.items.bulkPut(restoredItems);
     if (Array.isArray(parsed.outfits)) {

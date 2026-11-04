@@ -1,9 +1,10 @@
-import { Briefcase, Plus, Shirt, Sparkles, type LucideIcon } from 'lucide-react';
+import { Briefcase, Plus, Shirt, ShoppingBag, Sparkles, type LucideIcon } from 'lucide-react';
 
-export type Tab = 'home' | 'add' | 'wardrobe' | 'assistant';
+export type Tab = 'home' | 'tryon' | 'add' | 'wardrobe' | 'assistant';
 
 const TABS: { id: Tab; label: string; Icon: LucideIcon }[] = [
   { id: 'home', label: 'Stylizacja', Icon: Sparkles },
+  { id: 'tryon', label: 'Przymierz', Icon: ShoppingBag },
   { id: 'add', label: 'Dodaj', Icon: Plus },
   { id: 'wardrobe', label: 'Szafa', Icon: Shirt },
   { id: 'assistant', label: 'Asystent', Icon: Briefcase },

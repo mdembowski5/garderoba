@@ -199,6 +199,7 @@ export default function AddItem({
     try {
       await addItem({
         imageBlob: activeImage.blob,
+        imageDataUrl: activeImage.dataUrl,
         category,
         subCategory,
         tempRange: TEMP_IDS[tempIdx] as TempRange,

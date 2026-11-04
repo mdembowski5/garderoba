@@ -15,7 +15,8 @@ export type Occasion = 'casual' | 'work' | 'party' | 'formal' | 'sport';
 
 export interface ClothingItem {
   id: string; // UUID
-  imageBlob: Blob; // skompresowane zdjęcie (WebP / JPEG, ≤ 80 KB)
+  imageBlob?: Blob; // opcjonalny Blob (dla kompatybilności wstecznej)
+  imageDataUrl?: string; // niezawodny DataURL (eliminuje błędy Blob w iOS Safari IndexedDB)
   category: Category;
   subCategory: string;
   tempRange: TempRange;
@@ -29,6 +30,41 @@ export interface ClothingItem {
   wearCount?: number; // ile razy założono ubranie
   inLaundry?: boolean; // czy ubranie jest obecnie w praniu (wykluczone z losowania)
   isFavorite?: boolean; // ulubione ubranie (lekki priorytet przy doborze)
+}
+
+export type SkinToneId =
+  | 'fair-cool'
+  | 'fair-warm'
+  | 'light-neutral'
+  | 'medium-warm'
+  | 'medium-cool'
+  | 'deep-warm'
+  | 'deep-cool';
+
+export type HairColorId =
+  | 'platinum-blonde'
+  | 'golden-blonde'
+  | 'ash-brown'
+  | 'warm-brown-red'
+  | 'dark-brown'
+  | 'black'
+  | 'grey-silver';
+
+export type EyeColorId =
+  | 'blue'
+  | 'green'
+  | 'hazel'
+  | 'amber-brown'
+  | 'dark-brown'
+  | 'grey';
+
+export type ColorSeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
+
+export interface PersonalColorProfile {
+  enabled: boolean;
+  skinTone: SkinToneId;
+  hairColor: HairColorId;
+  eyeColor: EyeColorId;
 }
 
 export type NewClothingItem = Omit<ClothingItem, 'id' | 'createdAt' | 'lastWornAt'>;

@@ -77,7 +77,13 @@ export default function Wardrobe({
   }, [items]);
 
   const totalKB = useMemo(
-    () => Math.round((items ?? []).reduce((s, i) => s + i.imageBlob.size, 0) / 1024),
+    () =>
+      Math.round(
+        (items ?? []).reduce((s, i) => {
+          if (i.imageDataUrl) return s + Math.round(i.imageDataUrl.length * 0.75);
+          return s + (i.imageBlob?.size ?? 0);
+        }, 0) / 1024
+      ),
     [items]
   );
 
@@ -91,22 +97,23 @@ export default function Wardrobe({
     const current = selected.occasions ?? ['casual'];
     const next = current.includes(o) ? current.filter((x) => x !== o) : [...current, o];
     if (next.length === 0) return;
+    setSelected((prev) => (prev ? { ...prev, occasions: next } : prev));
     await updateItem(selected.id, { occasions: next });
-    setSelected({ ...selected, occasions: next });
   };
 
   const toggleItemFavorite = async () => {
     if (!selected) return;
     const next = !selected.isFavorite;
+    setSelected((prev) => (prev ? { ...prev, isFavorite: next } : prev));
     await updateItem(selected.id, { isFavorite: next });
-    setSelected({ ...selected, isFavorite: next });
+    notify(next ? 'Dodano do ulubionych ❤️' : 'Usunięto z ulubionych');
   };
 
   const toggleItemLaundry = async () => {
     if (!selected) return;
     const next = !selected.inLaundry;
+    setSelected((prev) => (prev ? { ...prev, inLaundry: next } : prev));
     await updateItem(selected.id, { inLaundry: next });
-    setSelected({ ...selected, inLaundry: next });
     notify(next ? 'Wrzucono do kosza na pranie 🧺' : 'Oznaczono jako czyste ✨');
   };
 
@@ -118,21 +125,23 @@ export default function Wardrobe({
   const changeCategory = async (newCat: Category) => {
     if (!selected) return;
     const firstSub = SUBCATEGORIES[newCat][0].label;
+    setSelected((prev) => (prev ? { ...prev, category: newCat, subCategory: firstSub } : prev));
     await updateItem(selected.id, { category: newCat, subCategory: firstSub });
-    setSelected({ ...selected, category: newCat, subCategory: firstSub });
   };
 
   const changeSubCategory = async (newSub: string) => {
     if (!selected) return;
+    setSelected((prev) => (prev ? { ...prev, subCategory: newSub } : prev));
     await updateItem(selected.id, { subCategory: newSub });
-    setSelected({ ...selected, subCategory: newSub });
   };
 
   const changeColor = async (name: string, hex: string) => {
     if (!selected) return;
     const brightnessType = brightnessOfHex(hex);
+    setSelected((prev) =>
+      prev ? { ...prev, dominantColor: name, colorHex: hex, brightnessType } : prev
+    );
     await updateItem(selected.id, { dominantColor: name, colorHex: hex, brightnessType });
-    setSelected({ ...selected, dominantColor: name, colorHex: hex, brightnessType });
   };
 
   const remove = async () => {

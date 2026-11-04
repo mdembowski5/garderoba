@@ -1,21 +1,30 @@
 import type {
+  BrightnessType,
   Category,
   ClothingItem,
   DayPreference,
   Occasion,
   Outfit,
+  PersonalColorProfile,
   RecommendResult,
   TempRange,
   WeatherData,
 } from '../types';
-import { OCCASION_LABELS } from './constants';
+import { CATEGORY_LABELS, OCCASION_LABELS } from './constants';
 import { colorHarmony, isVivid } from './palette';
+import {
+  evaluateColorForPerson,
+  loadPersonalProfile,
+  type PersonalColorEvaluation,
+} from './personalColor';
 import { isSunny, isWet, tempRangeFor } from './weather';
 
 export interface RecommendOptions {
   preference: DayPreference;
   /** Okazja (domyślnie „Zwykły dzień”). */
   occasion?: Occasion;
+  /** Profil urody (skóra, włosy, oczy). Domyślnie odczytywany z pamięci. */
+  personalProfile?: PersonalColorProfile;
   /** Przypięte (zablokowane) elementy, które mają pozostać w zestawie przy losowaniu. */
   locked?: Partial<Record<Category, ClothingItem>>;
   /** Ziarno generatora losowego – ten sam seed i dane wejściowe dają ten sam strój. */
@@ -161,14 +170,29 @@ function prefFactor(pref: DayPreference, item: ClothingItem): number {
   return 1;
 }
 
-export function computeOutfitScore(outfit: {
-  top?: ClothingItem;
-  bottom?: ClothingItem;
-  onepiece?: ClothingItem;
-  shoes?: ClothingItem;
-  outerwear?: ClothingItem;
-  bag?: ClothingItem;
-}): number {
+function personalFactor(
+  item: ClothingItem,
+  profile: PersonalColorProfile | undefined
+): number {
+  if (!profile || !profile.enabled) return 1;
+  const ev = evaluateColorForPerson(item.dominantColor, item.colorHex, item.category, profile);
+  if (ev.tier === 'power') return 1.5;
+  if (ev.tier === 'good') return 1.18;
+  if (ev.tier === 'caution') return 0.45;
+  return 1.0;
+}
+
+export function computeOutfitScore(
+  outfit: {
+    top?: ClothingItem;
+    bottom?: ClothingItem;
+    onepiece?: ClothingItem;
+    shoes?: ClothingItem;
+    outerwear?: ClothingItem;
+    bag?: ClothingItem;
+  },
+  profile?: PersonalColorProfile
+): number {
   const primaryColor = outfit.onepiece
     ? outfit.onepiece.dominantColor
     : outfit.top?.dominantColor ?? 'Czerń';
@@ -185,7 +209,20 @@ export function computeOutfitScore(outfit: {
   if (outfit.shoes) harmonies.push(colorHarmony(outfit.shoes.dominantColor, secondaryColor));
   if (outfit.outerwear) harmonies.push(colorHarmony(outfit.outerwear.dominantColor, primaryColor));
   if (outfit.bag) harmonies.push(colorHarmony(outfit.bag.dominantColor, primaryColor));
-  return Math.round((harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100);
+  const baseScore = (harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100;
+
+  const activeProfile = profile ?? loadPersonalProfile();
+  if (!activeProfile.enabled) return Math.round(baseScore);
+
+  const faceItem = outfit.onepiece ?? outfit.top;
+  if (!faceItem) return Math.round(baseScore);
+  const ev = evaluateColorForPerson(
+    faceItem.dominantColor,
+    faceItem.colorHex,
+    faceItem.category,
+    activeProfile
+  );
+  return Math.max(35, Math.min(100, Math.round(baseScore * 0.85 + ev.matchPercent * 0.15)));
 }
 
 export function computeSignature(outfit: {
@@ -245,9 +282,20 @@ export function recommendOutfit(
     };
   }
 
+  const personalProfile = options.personalProfile ?? loadPersonalProfile();
+
   let last: Outfit | undefined;
   for (let attempt = 0; attempt < 15; attempt++) {
-    const outfit = buildOutfit(items, weather, pref, occasion, options.locked, rng, now);
+    const outfit = buildOutfit(
+      items,
+      weather,
+      pref,
+      occasion,
+      personalProfile,
+      options.locked,
+      rng,
+      now
+    );
     last = outfit;
     if (!options.exclude || !options.exclude.has(outfit.signature)) break;
   }
@@ -276,6 +324,7 @@ function buildOutfit(
   weather: WeatherData,
   pref: DayPreference,
   occasion: Occasion,
+  personalProfile: PersonalColorProfile,
   locked: Partial<Record<Category, ClothingItem>> | undefined,
   rng: () => number,
   now: number
@@ -317,6 +366,8 @@ function buildOutfit(
         const w =
           ((tempFit(top, target) + tempFit(bottom, target)) / 2) *
           occMatch *
+          personalFactor(top, personalProfile) *
+          personalFactor(bottom, personalProfile) *
           wornFactor(top, now) *
           wornFactor(bottom, now);
         bases.push({ kind: 'pair', top, bottom, h, level: pairLevel(pref, top, bottom), w });
@@ -340,7 +391,11 @@ function buildOutfit(
         );
     for (const op of onePool) {
       const occMatch = occasionsOf(op).includes(occasion) ? 1.15 : 0.35;
-      const w = tempFit(op, target) * occMatch * wornFactor(op, now);
+      const w =
+        tempFit(op, target) *
+        occMatch *
+        personalFactor(op, personalProfile) *
+        wornFactor(op, now);
       bases.push({
         kind: 'onepiece',
         onepiece: op,
@@ -409,6 +464,7 @@ function buildOutfit(
             colorHarmony(o.dominantColor, secondaryColor)) /
             2) *
           prefFactor(pref, o) *
+          personalFactor(o, personalProfile) *
           wornFactor(o, now),
         rng
       );
@@ -468,7 +524,7 @@ function buildOutfit(
   return {
     ...partial,
     notes: Array.from(new Set(notes)),
-    score: computeOutfitScore(partial),
+    score: computeOutfitScore(partial, personalProfile),
     signature: computeSignature(partial),
   };
 }
@@ -657,3 +713,275 @@ export function generatePackingList(
 
   return { entries, combinationsCount };
 }
+
+// ---------- Doradca zakupowy / Przymierzalnia do szafy ----------
+
+export interface PurchaseCandidateInput {
+  category: Category;
+  subCategory: string;
+  dominantColor: string;
+  colorHex: string;
+  brightnessType: BrightnessType;
+  occasions: Occasion[];
+}
+
+export interface MatchedWardrobeItem {
+  item: ClothingItem;
+  harmonyPercent: number;
+  occasionOverlap: boolean;
+}
+
+export interface ComplementaryGroupAnalysis {
+  category: Category;
+  title: string;
+  requiredForOutfit: boolean;
+  totalInWardrobe: number;
+  matchingItems: MatchedWardrobeItem[];
+  missingWarning?: string;
+}
+
+export interface PurchaseAnalysisResult {
+  personalEval: PersonalColorEvaluation;
+  groups: ComplementaryGroupAnalysis[];
+  similarItems: ClothingItem[];
+  newOutfitsCount: number;
+  wardrobeMatchPercent: number;
+  overallScore: number;
+  verdictTitle: string;
+  verdictTone: 'great' | 'good' | 'caution';
+  pros: string[];
+  warnings: string[];
+}
+
+export function analyzePurchaseCandidate(
+  candidate: PurchaseCandidateInput,
+  wardrobeItems: ClothingItem[],
+  personalProfile: PersonalColorProfile
+): PurchaseAnalysisResult {
+  const personalEval = evaluateColorForPerson(
+    candidate.dominantColor,
+    candidate.colorHex,
+    candidate.category,
+    personalProfile
+  );
+
+  // Określamy jakie kategorie w szafie są kluczowe do sparowania z tym ubraniem
+  const targetCategories: { category: Category; title: string; required: boolean }[] = (() => {
+    switch (candidate.category) {
+      case 'top':
+        return [
+          { category: 'bottom', title: 'Spodnie i spódnice (Dół)', required: true },
+          { category: 'shoes', title: 'Buty', required: true },
+          { category: 'outerwear', title: 'Okrycia wierzchnie (Kurtki / Marynarki)', required: false },
+          { category: 'bag', title: 'Torebki i plecaki', required: false },
+        ];
+      case 'bottom':
+        return [
+          { category: 'top', title: 'Bluzki, koszule, t-shirty i swetry (Góra)', required: true },
+          { category: 'shoes', title: 'Buty', required: true },
+          { category: 'outerwear', title: 'Okrycia wierzchnie', required: false },
+          { category: 'bag', title: 'Torebki i plecaki', required: false },
+        ];
+      case 'onepiece':
+        return [
+          { category: 'shoes', title: 'Buty do sukienki / kombinezonu', required: true },
+          { category: 'outerwear', title: 'Okrycia wierzchnie (Marynarki / Płaszcze)', required: false },
+          { category: 'bag', title: 'Torebki', required: false },
+          { category: 'accessory', title: 'Biżuteria i dodatki', required: false },
+        ];
+      case 'outerwear':
+        return [
+          { category: 'top', title: 'Góra (Bluzki / Koszule / Swetry)', required: true },
+          { category: 'bottom', title: 'Dół (Spodnie / Spódnice)', required: true },
+          { category: 'onepiece', title: 'Sukienki i kombinezony', required: false },
+          { category: 'shoes', title: 'Buty', required: false },
+        ];
+      case 'shoes':
+        return [
+          { category: 'bottom', title: 'Spodnie i spódnice (Dół)', required: true },
+          { category: 'onepiece', title: 'Sukienki i kombinezony', required: false },
+          { category: 'top', title: 'Góra', required: false },
+          { category: 'bag', title: 'Torebki i plecaki', required: false },
+        ];
+      case 'bag':
+      case 'accessory':
+        return [
+          { category: 'top', title: 'Góra', required: true },
+          { category: 'bottom', title: 'Dół', required: true },
+          { category: 'onepiece', title: 'Sukienki i kombinezony', required: false },
+          { category: 'shoes', title: 'Buty', required: false },
+        ];
+    }
+  })();
+
+  const groups: ComplementaryGroupAnalysis[] = targetCategories.map(
+    ({ category, title, required }) => {
+      const inCat = wardrobeItems.filter((i) => i.category === category);
+      const scored: MatchedWardrobeItem[] = inCat
+        .map((item) => {
+          const h = colorHarmony(candidate.dominantColor, item.dominantColor);
+          const itemOcc = occasionsOf(item);
+          const occasionOverlap = candidate.occasions.some((o) => itemOcc.includes(o));
+          const effectiveHarmony = Math.round((h * (occasionOverlap ? 1 : 0.88)) * 100);
+          return {
+            item,
+            harmonyPercent: Math.min(100, effectiveHarmony),
+            occasionOverlap,
+          };
+        })
+        .filter((m) => m.harmonyPercent >= 68)
+        .sort((a, b) => b.harmonyPercent - a.harmonyPercent);
+
+      let missingWarning: string | undefined;
+      if (inCat.length === 0) {
+        missingWarning = `Nie masz jeszcze w szafie żadnych ubrań w kategorii „${CATEGORY_LABELS[category]}”.`;
+      } else if (scored.length === 0) {
+        missingWarning = `Masz w szafie ${inCat.length} szt. w kategorii „${CATEGORY_LABELS[category]}”, ale żadna nie tworzy spójnej harmonii kolorystycznej z odcieniem „${candidate.dominantColor}”.`;
+      }
+
+      return {
+        category,
+        title,
+        requiredForOutfit: required,
+        totalInWardrobe: inCat.length,
+        matchingItems: scored,
+        missingWarning,
+      };
+    }
+  );
+
+  // Obliczamy liczbę nowych pełnych zestawów, które można złożyć z tym ubraniem
+  const matchingTops =
+    groups.find((g) => g.category === 'top')?.matchingItems.length ??
+    wardrobeItems.filter((i) => i.category === 'top').length;
+  const matchingBottoms =
+    groups.find((g) => g.category === 'bottom')?.matchingItems.length ??
+    wardrobeItems.filter((i) => i.category === 'bottom').length;
+  const matchingShoes = Math.max(
+    1,
+    groups.find((g) => g.category === 'shoes')?.matchingItems.length ?? 0
+  );
+
+  let newOutfitsCount = 0;
+  if (candidate.category === 'top') {
+    const bCount = groups.find((g) => g.category === 'bottom')?.matchingItems.length ?? 0;
+    const sCount = groups.find((g) => g.category === 'shoes')?.matchingItems.length ?? 0;
+    newOutfitsCount = bCount * Math.max(1, sCount);
+  } else if (candidate.category === 'bottom') {
+    const tCount = groups.find((g) => g.category === 'top')?.matchingItems.length ?? 0;
+    const sCount = groups.find((g) => g.category === 'shoes')?.matchingItems.length ?? 0;
+    newOutfitsCount = tCount * Math.max(1, sCount);
+  } else if (candidate.category === 'onepiece') {
+    const sCount = groups.find((g) => g.category === 'shoes')?.matchingItems.length ?? 0;
+    const oCount = groups.find((g) => g.category === 'outerwear')?.matchingItems.length ?? 0;
+    newOutfitsCount = sCount * Math.max(1, oCount + 1);
+  } else {
+    newOutfitsCount = Math.max(matchingTops, 1) * Math.max(matchingBottoms, 1) * Math.min(2, matchingShoes);
+  }
+
+  // Sprawdzamy duplikaty w szafie
+  const similarItems = wardrobeItems.filter(
+    (i) => i.category === candidate.category && i.dominantColor === candidate.dominantColor
+  );
+
+  // Ocena dopasowania do szafy (0..100)
+  const requiredGroups = groups.filter((g) => g.requiredForOutfit);
+  let wardrobeMatchPercent = 0;
+  if (wardrobeItems.length === 0) {
+    wardrobeMatchPercent = 50;
+  } else if (requiredGroups.some((g) => g.matchingItems.length === 0)) {
+    // Brak kluczowego elementu (np. brak jakichkolwiek pasujących spodni do bluzki!)
+    const partialMatches = requiredGroups.filter((g) => g.matchingItems.length > 0).length;
+    wardrobeMatchPercent = Math.round((partialMatches / Math.max(1, requiredGroups.length)) * 45);
+  } else {
+    const avgBest =
+      requiredGroups.reduce((sum, g) => {
+        const top3 = g.matchingItems.slice(0, 3);
+        const avg = top3.reduce((s, m) => s + m.harmonyPercent, 0) / top3.length;
+        const countBonus = Math.min(12, (g.matchingItems.length - 1) * 4);
+        return sum + Math.min(100, avg + countBonus);
+      }, 0) / requiredGroups.length;
+    wardrobeMatchPercent = Math.round(avgBest);
+  }
+
+  const duplicatePenalty = similarItems.length >= 2 ? 12 : similarItems.length === 1 ? 5 : 0;
+  const overallScore = Math.max(
+    15,
+    Math.min(
+      100,
+      Math.round(personalEval.matchPercent * 0.45 + wardrobeMatchPercent * 0.55 - duplicatePenalty)
+    )
+  );
+
+  const pros: string[] = [];
+  const warnings: string[] = [];
+
+  if (personalEval.tier === 'power') {
+    pros.push(
+      `Kolor „${candidate.dominantColor}” należy do Twoich najlepszych barw (${personalEval.season.emoji} ${personalEval.season.name}).`
+    );
+  } else if (personalEval.tier === 'good') {
+    pros.push(
+      `Kolor „${candidate.dominantColor}” dobrze współgra z Twoim typem urody (${personalEval.season.name}).`
+    );
+  } else if (personalEval.tier === 'caution') {
+    warnings.push(
+      `Kolor „${candidate.dominantColor}” blisko twarzy nie jest optymalny dla Twojego typu urody (${personalEval.season.name}).`
+    );
+  }
+
+  for (const g of requiredGroups) {
+    if (g.matchingItems.length > 0) {
+      const examples = g.matchingItems
+        .slice(0, 3)
+        .map((m) => `${m.item.subCategory} (${m.item.dominantColor.toLowerCase()})`)
+        .join(', ');
+      pros.push(
+        `Pasuje do ${g.matchingItems.length} szt. w kategorii „${g.title}”: m.in. ${examples}.`
+      );
+    } else if (g.missingWarning) {
+      warnings.push(g.missingWarning);
+    }
+  }
+
+  if (newOutfitsCount > 0) {
+    pros.push(`Pozwoli od razu stworzyć ok. ${newOutfitsCount} spójnych stylizacji z obecną szafą.`);
+  } else if (wardrobeItems.length > 0) {
+    warnings.push(
+      'Z obecną zawartością szafy nie stworzysz jeszcze pełnego zestawu – konieczny będzie zakup brakującego elementu do pary.'
+    );
+  }
+
+  if (similarItems.length > 0) {
+    warnings.push(
+      `W szafie masz już ${similarItems.length} szt. w tej kategorii i kolorze (${similarItems
+        .map((s) => s.subCategory)
+        .join(', ')}).`
+    );
+  } else {
+    pros.push(`Brak duplikatu w szafie – nowy odcień w kategorii „${CATEGORY_LABELS[candidate.category]}”.`);
+  }
+
+  const verdictTone: 'great' | 'good' | 'caution' =
+    overallScore >= 78 ? 'great' : overallScore >= 58 ? 'good' : 'caution';
+  const verdictTitle =
+    verdictTone === 'great'
+      ? 'Świetny zakup – bardzo dobrze pasuje!'
+      : verdictTone === 'good'
+      ? 'Dobry zakup – warto rozważyć'
+      : 'Przemyśl zakup – niska kompatybilność';
+
+  return {
+    personalEval,
+    groups,
+    similarItems,
+    newOutfitsCount,
+    wardrobeMatchPercent,
+    overallScore,
+    verdictTitle,
+    verdictTone,
+    pros,
+    warnings,
+  };
+}
+

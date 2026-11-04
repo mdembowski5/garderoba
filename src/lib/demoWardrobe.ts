@@ -1,6 +1,6 @@
 import type { BrightnessType, Category, ClothingItem, Occasion, TempRange } from '../types';
 import { db, newId } from './db';
-import { canEncodeWebp, toBlob } from './image';
+import { blobToDataUrl } from './image';
 import { hexToRgb, rgbToHex } from './palette';
 
 type SilhouetteKind =
@@ -368,8 +368,8 @@ function shadeHex(hex: string, delta: number): string {
   return rgbToHex(r + delta, g + delta, b + delta);
 }
 
-/** Rysuje estetyczną ilustrację ubrania na studyjnym tle i zwraca skompresowany Blob. */
-async function renderGarmentIllustration(spec: DemoSpec): Promise<Blob> {
+/** Rysuje estetyczną ilustrację ubrania na studyjnym tle i zwraca DataURL (JPEG). */
+function renderGarmentIllustration(spec: DemoSpec): string {
   const S = 360;
   const canvas = document.createElement('canvas');
   canvas.width = S;
@@ -654,21 +654,75 @@ async function renderGarmentIllustration(spec: DemoSpec): Promise<Blob> {
   }
   ctx.restore();
 
-  const type = canEncodeWebp() ? 'image/webp' : 'image/jpeg';
-  return toBlob(canvas, type, 0.78);
+  return canvas.toDataURL('image/jpeg', 0.82);
 }
 
-/** Generuje i zapisuje 27 różnorodnych ubrań testowych w bazie IndexedDB. */
+function inferSilhouette(category: Category, subCategory: string): SilhouetteKind {
+  const s = subCategory.toLowerCase();
+  if (category === 'top') {
+    if (s.includes('koszul')) return 'shirt';
+    if (s.includes('golf')) return 'turtleneck';
+    if (s.includes('sweter') || s.includes('kardigan')) return 'sweater';
+    if (s.includes('bluz') && s.includes('kaptur')) return 'hoodie';
+    if (s.includes('bluzk') || s.includes('top')) return 'blouse';
+    return 'tshirt';
+  }
+  if (category === 'bottom') {
+    if (s.includes('spódnic')) return 'skirt';
+    if (s.includes('szort') || s.includes('spodenk')) return 'shorts';
+    if (s.includes('jeans')) return 'jeans';
+    return 'trousers';
+  }
+  if (category === 'onepiece') return 'dress';
+  if (category === 'outerwear') {
+    if (s.includes('trencz') || s.includes('płaszcz')) return 'trench';
+    if (s.includes('marynark') || s.includes('żakiet')) return 'blazer';
+    return 'puffer';
+  }
+  if (category === 'shoes') {
+    if (s.includes('szpilk') || s.includes('czółenk')) return 'heels';
+    if (s.includes('botk') || s.includes('sztyblet') || s.includes('traper')) return 'boots';
+    return 'sneakers';
+  }
+  if (category === 'bag') return 'bag';
+  if (s.includes('okular')) return 'sunglasses';
+  if (s.includes('naszyjnik') || s.includes('łańcuszek')) return 'necklace';
+  if (s.includes('szalik') || s.includes('apaszka')) return 'scarf';
+  return 'watch';
+}
+
+export function renderFallbackIllustrationForItem(
+  item: Pick<ClothingItem, 'category' | 'subCategory' | 'colorHex'>
+): string {
+  const matchedDemo = DEMO_ITEMS.find(
+    (d) =>
+      d.category === item.category &&
+      d.subCategory === item.subCategory &&
+      d.colorHex.toLowerCase() === item.colorHex.toLowerCase()
+  );
+  return renderGarmentIllustration({
+    category: item.category,
+    subCategory: item.subCategory,
+    dominantColor: '',
+    colorHex: item.colorHex || '#7bb2e0',
+    brightnessType: 'neutral',
+    tempRange: 'mild',
+    occasions: ['casual'],
+    silhouette: matchedDemo?.silhouette ?? inferSilhouette(item.category, item.subCategory),
+  });
+}
+
+/** Generuje i zapisuje 27 różnorodnych ubrań testowych w bazie IndexedDB (z licznikiem założeń = 0). */
 export async function seedDemoWardrobe(): Promise<number> {
   const now = Date.now();
   const created: ClothingItem[] = [];
 
   for (let i = 0; i < DEMO_ITEMS.length; i++) {
     const spec = DEMO_ITEMS[i];
-    const imageBlob = await renderGarmentIllustration(spec);
+    const imageDataUrl = await renderGarmentIllustration(spec);
     created.push({
       id: newId(),
-      imageBlob,
+      imageDataUrl,
       category: spec.category,
       subCategory: spec.subCategory,
       tempRange: spec.tempRange,
@@ -676,16 +730,89 @@ export async function seedDemoWardrobe(): Promise<number> {
       dominantColor: spec.dominantColor,
       colorHex: spec.colorHex,
       brightnessType: spec.brightnessType,
-      occasions: spec.occasions,
+      occasions: [...spec.occasions],
       createdAt: now - (DEMO_ITEMS.length - i) * 60000,
-      wearCount: spec.wearCount ?? 0,
+      wearCount: 0,
       inLaundry: false,
-      isFavorite: Boolean(spec.isFavorite),
+      isFavorite: false,
     });
   }
 
   await db.items.bulkAdd(created);
   return created.length;
+}
+
+/**
+ * Naprawia istniejące rekordy w IndexedDB (migracja z Blob do DataURL dla iOS Safari
+ * oraz wyzerowanie sztucznych liczników założeń z wcześniejszej wersji szafy testowej).
+ */
+export async function repairWardrobeDatabase(): Promise<void> {
+  try {
+    const [allItems, outfitsCount] = await Promise.all([
+      db.items.toArray(),
+      db.outfits.count(),
+    ]);
+    if (allItems.length === 0) return;
+
+    const toPut: ClothingItem[] = [];
+    for (const item of allItems) {
+      let needsSave = false;
+      let imageDataUrl = item.imageDataUrl;
+
+      if (!imageDataUrl || !imageDataUrl.startsWith('data:image/')) {
+        if (item.imageBlob && item.imageBlob.size > 0) {
+          try {
+            imageDataUrl = await blobToDataUrl(item.imageBlob);
+          } catch {
+            imageDataUrl = renderFallbackIllustrationForItem(item);
+          }
+        } else {
+          imageDataUrl = renderFallbackIllustrationForItem(item);
+        }
+        needsSave = true;
+      }
+
+      // Usuwamy surowy obiekt Blob z rekordu w IndexedDB, aby iOS Safari nie blokowało aktualizacji (put/update)
+      const hasRawBlob = 'imageBlob' in item && item.imageBlob !== undefined;
+      if (hasRawBlob) {
+        needsSave = true;
+      }
+
+      // Jeśli użytkownik nie zaakceptował jeszcze żadnego stroju w historii, zerujemy licznik założeń z demo
+      let wearCount = item.wearCount ?? 0;
+      if (outfitsCount === 0 && wearCount > 0) {
+        wearCount = 0;
+        needsSave = true;
+      }
+
+      if (needsSave) {
+        const cleaned: ClothingItem = {
+          id: item.id,
+          imageDataUrl,
+          category: item.category,
+          subCategory: item.subCategory,
+          tempRange: item.tempRange,
+          isRainproof: Boolean(item.isRainproof),
+          dominantColor: item.dominantColor,
+          colorHex: item.colorHex,
+          brightnessType: item.brightnessType,
+          occasions: Array.isArray(item.occasions) && item.occasions.length > 0 ? item.occasions : ['casual'],
+          createdAt: item.createdAt ?? Date.now(),
+          lastWornAt: outfitsCount === 0 ? undefined : item.lastWornAt,
+          wearCount,
+          inLaundry: Boolean(item.inLaundry),
+          isFavorite: Boolean(item.isFavorite),
+        };
+        toPut.push(cleaned);
+      }
+    }
+
+    if (toPut.length > 0) {
+      await db.items.bulkPut(toPut);
+    }
+  } catch {
+    // Ignoruj ewentualne błędy migracji
+  }
 }
 
 export async function clearAllWardrobe(): Promise<void> {
