@@ -17,6 +17,7 @@ import type {
   BrightnessType,
   Category,
   Occasion,
+  PatternType,
   PersonalColorProfile,
   TempRange,
 } from '../types';
@@ -29,6 +30,9 @@ import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   OCCASIONS,
+  PATTERNS,
+  PATTERN_EMOJIS,
+  PATTERN_LABELS,
   SUBCATEGORIES,
   TEMP_RANGES,
 } from '../lib/constants';
@@ -43,7 +47,7 @@ import {
   savePersonalProfile,
 } from '../lib/personalColor';
 import { analyzePurchaseCandidate } from '../lib/outfit';
-import { Chip, ColorDot, ItemImage } from '../components/ui';
+import { Chip, ColorDot, ColorDots, ItemImage } from '../components/ui';
 import PersonalPaletteSheet from '../components/PersonalPaletteSheet';
 import type { Tab } from '../components/TabBar';
 
@@ -83,6 +87,9 @@ export default function TryOn({
   const [occasions, setOccasions] = useState<Occasion[]>(['casual']);
   const [colorName, setColorName] = useState('Pudrowy róż');
   const [colorHex, setColorHex] = useState('#e6b5c0');
+  const [secondaryColors, setSecondaryColors] = useState<string[]>([]);
+  const [secondaryColorHexes, setSecondaryColorHexes] = useState<string[]>([]);
+  const [pattern, setPattern] = useState<PatternType>('solid');
   const [brightness, setBrightness] = useState<BrightnessType>('light');
   const [savingToWardrobe, setSavingToWardrobe] = useState(false);
 
@@ -97,21 +104,28 @@ export default function TryOn({
     savePersonalProfile(next);
   };
 
-  const applyPreset = (cat: Category, label: string) => {
+  const applyPreset = (cat: Category, label: string, overridePattern?: PatternType) => {
     const preset = SUBCATEGORIES[cat].find((p) => p.label === label) ?? SUBCATEGORIES[cat][0];
     if (!preset) return;
     setTempIdx(TEMP_IDS.indexOf(preset.temp));
     setRainproof(Boolean(preset.rainproof));
     setOccasions([...preset.occasions]);
+    if (overridePattern) {
+      setPattern(overridePattern);
+    }
   };
 
-  const chooseCategory = (cat: Category, preferredSub?: string) => {
+  const chooseCategory = (
+    cat: Category,
+    preferredSub?: string,
+    detectedPattern?: PatternType
+  ) => {
     setCategory(cat);
     const list = SUBCATEGORIES[cat];
     const chosen =
       preferredSub && list.some((s) => s.label === preferredSub) ? preferredSub : list[0].label;
     setSubCategory(chosen);
-    applyPreset(cat, chosen);
+    applyPreset(cat, chosen, detectedPattern);
   };
 
   const chooseSubCategory = (label: string) => {
@@ -135,8 +149,15 @@ export default function TryOn({
       setDraft({ original, cutout, analysis });
       setColorName(analysis.paletteName);
       setColorHex(analysis.hex);
+      setSecondaryColors(analysis.secondaryColors ?? []);
+      setSecondaryColorHexes(analysis.secondaryColorHexes ?? []);
+      setPattern(analysis.suggestedPattern ?? 'solid');
       setBrightness(analysis.brightness);
-      chooseCategory(analysis.suggestedCategory, analysis.suggestedSubCategory);
+      chooseCategory(
+        analysis.suggestedCategory,
+        analysis.suggestedSubCategory,
+        analysis.suggestedPattern
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się przeanalizować zdjęcia.');
     } finally {
@@ -160,6 +181,9 @@ export default function TryOn({
       setDraft({ ...draft, cutout, analysis });
       setColorName(analysis.paletteName);
       setColorHex(analysis.hex);
+      setSecondaryColors(analysis.secondaryColors ?? []);
+      setSecondaryColorHexes(analysis.secondaryColorHexes ?? []);
+      setPattern(analysis.suggestedPattern ?? 'solid');
       setBrightness(analysis.brightness);
     } finally {
       setRefining(false);
@@ -170,6 +194,28 @@ export default function TryOn({
     setColorName(name);
     setColorHex(hex);
     setBrightness(brightnessOfHex(hex));
+    const filteredIdx = secondaryColors
+      .map((c, idx) => (c !== name ? idx : -1))
+      .filter((idx) => idx >= 0);
+    if (filteredIdx.length !== secondaryColors.length) {
+      setSecondaryColors(filteredIdx.map((i) => secondaryColors[i]));
+      setSecondaryColorHexes(filteredIdx.map((i) => secondaryColorHexes[i]));
+    }
+  };
+
+  const toggleSecondaryColor = (name: string, hex: string) => {
+    if (name === colorName) return;
+    const idx = secondaryColors.indexOf(name);
+    if (idx >= 0) {
+      setSecondaryColors(secondaryColors.filter((_, i) => i !== idx));
+      setSecondaryColorHexes(secondaryColorHexes.filter((_, i) => i !== idx));
+    } else if (secondaryColors.length < 2) {
+      setSecondaryColors([...secondaryColors, name]);
+      setSecondaryColorHexes([...secondaryColorHexes, hex]);
+    } else {
+      setSecondaryColors([secondaryColors[0], name]);
+      setSecondaryColorHexes([secondaryColorHexes[0], hex]);
+    }
   };
 
   const toggleOccasion = (o: Occasion) => {
@@ -192,13 +238,28 @@ export default function TryOn({
           subCategory,
           dominantColor: colorName,
           colorHex,
+          secondaryColors,
+          secondaryColorHexes,
+          pattern,
           brightnessType: brightness,
           occasions,
         },
         items,
         profile
       ),
-    [category, subCategory, colorName, colorHex, brightness, occasions, items, profile]
+    [
+      category,
+      subCategory,
+      colorName,
+      colorHex,
+      secondaryColors,
+      secondaryColorHexes,
+      pattern,
+      brightness,
+      occasions,
+      items,
+      profile,
+    ]
   );
 
   const handleSaveToWardrobe = async () => {
@@ -215,6 +276,9 @@ export default function TryOn({
         isRainproof: rainproof,
         dominantColor: colorName,
         colorHex,
+        secondaryColors,
+        secondaryColorHexes,
+        pattern,
         brightnessType: brightness,
         occasions: occasions.length ? occasions : ['casual'],
       });
@@ -376,11 +440,19 @@ export default function TryOn({
                     Rozpoznane ubranie
                   </div>
                   <div className="flex items-center gap-2 text-base font-bold">
-                    <ColorDot hex={colorHex} size={16} />
-                    <span className="truncate">{colorName}</span>
+                    <ColorDots
+                      primaryHex={colorHex}
+                      secondaryHexes={secondaryColorHexes}
+                      size={16}
+                    />
+                    <span className="truncate">
+                      {colorName}
+                      {secondaryColors.length > 0 ? ` + ${secondaryColors.join(', ')}` : ''}
+                    </span>
                   </div>
                   <div className="truncate text-xs font-medium text-accent-300">
-                    {CATEGORY_EMOJIS[category]} {CATEGORY_LABELS[category]} · {subCategory}
+                    {CATEGORY_EMOJIS[category]} {CATEGORY_LABELS[category]} · {subCategory} ·{' '}
+                    {PATTERN_EMOJIS[pattern]} {PATTERN_LABELS[pattern]}
                   </div>
                   <div className="flex flex-wrap gap-1.5 pt-1">
                     <button
@@ -405,7 +477,7 @@ export default function TryOn({
                 </div>
               </div>
 
-              {/* Szybka zmiana kategorii / rodzaju / koloru */}
+              {/* Szybka zmiana kategorii / rodzaju / wzoru / koloru */}
               <div className="mt-4 space-y-3 border-t border-white/10 pt-3">
                 <div>
                   <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
@@ -439,7 +511,20 @@ export default function TryOn({
 
                 <div>
                   <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
-                    Odcień (dotknij zdjęcia powyżej lub wybierz z palety)
+                    Wzór / Nadruk (rozpoznany automatycznie)
+                  </div>
+                  <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4">
+                    {PATTERNS.map((p) => (
+                      <Chip key={p.id} active={pattern === p.id} onClick={() => setPattern(p.id)}>
+                        {p.emoji} {p.label}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+                    Kolor główny (dotknij zdjęcia powyżej lub wybierz z palety)
                   </div>
                   <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 py-0.5">
                     {PALETTE.map((p) => {
@@ -452,6 +537,46 @@ export default function TryOn({
                           className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
                             active
                               ? 'bg-white text-ink-950 font-semibold'
+                              : 'bg-ink-800 text-ink-300'
+                          }`}
+                        >
+                          <ColorDot hex={p.hex} size={11} />
+                          {p.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+                      Dodatkowe kolory (wielokolorowe / wzór – maks. 2)
+                    </span>
+                    {secondaryColors.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSecondaryColors([]);
+                          setSecondaryColorHexes([]);
+                        }}
+                        className="text-[11px] font-semibold text-accent-300"
+                      >
+                        Wyczyść
+                      </button>
+                    )}
+                  </div>
+                  <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 py-0.5">
+                    {PALETTE.filter((p) => p.name !== colorName).map((p) => {
+                      const active = secondaryColors.includes(p.name);
+                      return (
+                        <button
+                          key={p.name}
+                          type="button"
+                          onClick={() => toggleSecondaryColor(p.name, p.hex)}
+                          className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                            active
+                              ? 'bg-accent-500 text-white font-semibold'
                               : 'bg-ink-800 text-ink-300'
                           }`}
                         >

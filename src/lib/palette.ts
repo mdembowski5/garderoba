@@ -1,4 +1,4 @@
-import type { BrightnessType } from '../types';
+import type { BrightnessType, ClothingItem, PatternType } from '../types';
 
 export interface PaletteColor {
   name: string;
@@ -274,4 +274,141 @@ export function colorHarmony(a: string, b: string): number {
   if (pa.family === 'neutral' && pb.family === 'neutral') return 0.9;
   if (pa.family === 'neutral' || pb.family === 'neutral') return 0.85;
   return 0.42; // dwa różne kolory chromatyczne spoza par komplementarnych
+}
+
+export type GarmentHarmonyInput = Pick<
+  ClothingItem,
+  'dominantColor' | 'secondaryColors' | 'pattern'
+>;
+
+/** Zwraca wszystkie kolory ubrania (kolor dominujący + kolory dodatkowe). */
+export function getAllItemColors(item: GarmentHarmonyInput): string[] {
+  const sec = item.secondaryColors ?? [];
+  return Array.from(new Set([item.dominantColor, ...sec].filter(Boolean)));
+}
+
+export interface GarmentHarmonyResult {
+  /** Wynik łączny 0..1 uwzględniający wielokolorowość oraz zasady łączenia wzorów */
+  score: number;
+  /** Czy wystąpił tzw. "most kolorystyczny" (nawiązanie gładkiego ubrania do koloru dodatkowego wzoru/nadruku) */
+  hasColorBridge: boolean;
+  /** Komentarz stylizacyjny (np. powód bonusu lub ostrzeżenie o gryzących się wzorach) */
+  stylistNote?: string;
+}
+
+/**
+ * Zaawansowana harmonia dwóch ubrań uwzględniająca:
+ * 1. Wielokolorowość i tzw. "Color Bridging" (gdy jedno ubranie nawiązuje do koloru dodatkowego/wzoru drugiego).
+ * 2. Powszechnie przyjmowane zasady łączenia wzorów i nadruków (Pattern Mixing Rules):
+ *    - Wzór/nadruk + gładka baza (szczególnie w kolorze ze wzoru) = najwyższa harmonia.
+ *    - Dwa identyczne wzory (np. paski + paski, kratka + kratka, nadruk + nadruk) = błąd stylizacyjny.
+ *    - Nadruk graficzny + mocny wzór (kratka/kwiaty) = konflikt wizualny.
+ *    - Dwa różne wzory o różnej skali (np. paski + drobny wzór/kwiaty/kratka) są dozwolone wyłącznie, gdy łączy je wspólny kolor.
+ */
+export function garmentHarmony(
+  a: GarmentHarmonyInput,
+  b: GarmentHarmonyInput
+): GarmentHarmonyResult {
+  const baseH = colorHarmony(a.dominantColor, b.dominantColor);
+  const secA = a.secondaryColors ?? [];
+  const secB = b.secondaryColors ?? [];
+  const allA = getAllItemColors(a);
+  const allB = getAllItemColors(b);
+
+  // Sprawdzamy "Color Bridge" – czy kolor główny jednego ubrania powtarza kolor dodatkowy (np. pasek/nadruk/wzór) drugiego
+  const bridgeAtoB = secA.includes(b.dominantColor);
+  const bridgeBtoA = secB.includes(a.dominantColor);
+  const hasColorBridge = bridgeAtoB || bridgeBtoA;
+
+  // Średnia kompatybilność barw dodatkowych
+  let multiColorScore = baseH;
+  if (hasColorBridge) {
+    // Powtórzenie koloru ze wzoru/nadruku na drugim elemencie to wzorcowy zabieg stylizacyjny
+    multiColorScore = Math.max(baseH, 0.96);
+  } else if (secA.length > 0 || secB.length > 0) {
+    let sum = baseH * 2.2;
+    let weights = 2.2;
+    for (const ca of secA) {
+      sum += colorHarmony(ca, b.dominantColor) * 0.65;
+      weights += 0.65;
+    }
+    for (const cb of secB) {
+      sum += colorHarmony(a.dominantColor, cb) * 0.65;
+      weights += 0.65;
+    }
+    multiColorScore = sum / weights;
+  }
+
+  const patA: PatternType = a.pattern ?? 'solid';
+  const patB: PatternType = b.pattern ?? 'solid';
+
+  // Przypadek 1: Oba elementy są gładkie
+  if (patA === 'solid' && patB === 'solid') {
+    return {
+      score: Math.min(1, multiColorScore),
+      hasColorBridge,
+      stylistNote: hasColorBridge
+        ? 'Kolor jednego elementu nawiązuje do barwy dodatkowej drugiego ubrania.'
+        : undefined,
+    };
+  }
+
+  // Przypadek 2: Jeden element ma wzór/nadruk, a drugi jest gładki (Złota zasada stylizacji!)
+  if (patA === 'solid' || patB === 'solid') {
+    const patterned = patA !== 'solid' ? a : b;
+    const patType = patterned.pattern ?? 'solid';
+    const boost = hasColorBridge ? 0.06 : 0.03;
+    const score = Math.min(1, multiColorScore + boost);
+    return {
+      score,
+      hasColorBridge,
+      stylistNote: hasColorBridge
+        ? `Wzorcowe połączenie: gładki element powtarza kolor z ${
+            patType === 'print' ? 'nadruku' : 'wzoru'
+          } (tzw. most kolorystyczny).`
+        : 'Dobry balans: wyrazisty wzór/nadruk zrównoważony gładką bazą.',
+    };
+  }
+
+  // Przypadek 3: Oba elementy mają wzór lub nadruk (Pattern Mixing)
+  const sharedColor = allA.some((c) => allB.includes(c));
+
+  // 3a. Dwa takie same wzory/nadruki (np. paski + paski, kratka + kratka, nadruk + nadruk) -> Zgrzyt!
+  if (patA === patB) {
+    return {
+      score: Math.max(0.18, multiColorScore * 0.42),
+      hasColorBridge: false,
+      stylistNote:
+        'Unikaj łączenia dwóch takich samych wzorów lub dwóch nadruków graficznych obok siebie.',
+    };
+  }
+
+  // 3b. Nadruk graficzny + wzór (kratka/kwiaty/paski) lub kratka + kwiaty bez wspólnej bazy
+  const pairSet = new Set<PatternType>([patA, patB]);
+  if (pairSet.has('print')) {
+    return {
+      score: Math.max(0.25, multiColorScore * 0.52),
+      hasColorBridge: false,
+      stylistNote:
+        'Ubranie z nadrukiem graficznym najlepiej łączyć z gładkimi spodniami/spódnicą zamiast z kolejnym wzorem.',
+    };
+  }
+
+  // 3c. Dwa różne wzory (np. paski + drobne groszki, paski + kratka, paski + kwiaty)
+  // Dozwolone w stylizacji, jeśli różnią się geometrią/skalą i mają wspólny kolor spajający!
+  if (sharedColor) {
+    return {
+      score: Math.min(0.86, multiColorScore * 0.9),
+      hasColorBridge: true,
+      stylistNote:
+        'Odważne, ale poprawne łączenie dwóch różnych wzorów spiętych wspólnym kolorem.',
+    };
+  }
+
+  return {
+    score: Math.max(0.22, multiColorScore * 0.48),
+    hasColorBridge: false,
+    stylistNote:
+      'Dwa różne wzory bez wspólnego koloru wprowadzają wizualny chaos – wymień jeden element na gładki.',
+  };
 }

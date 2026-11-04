@@ -1,4 +1,11 @@
-import type { BrightnessType, Category, DayPreference, Occasion, TempRange } from '../types';
+import type {
+  BrightnessType,
+  Category,
+  DayPreference,
+  Occasion,
+  PatternType,
+  TempRange,
+} from '../types';
 
 export const CATEGORY_LABELS: Record<Category, string> = {
   top: 'Góra',
@@ -54,6 +61,65 @@ export const OCCASION_LABELS = Object.fromEntries(OCCASIONS.map((o) => [o.id, o.
   Occasion,
   string
 >;
+
+export const PATTERNS: {
+  id: PatternType;
+  label: string;
+  shortLabel: string;
+  emoji: string;
+  hint: string;
+}[] = [
+  {
+    id: 'solid',
+    label: 'Gładkie (bez wzoru)',
+    shortLabel: 'Gładkie',
+    emoji: '✨',
+    hint: 'Jednolita powierzchnia bez nadruków i deseni',
+  },
+  {
+    id: 'print',
+    label: 'Z nadrukiem / grafiką',
+    shortLabel: 'Nadruk',
+    emoji: '🖼️',
+    hint: 'Logo, napis lub grafika (np. na piersi t-shirtu/bluzy)',
+  },
+  {
+    id: 'stripes',
+    label: 'W paski / prążki',
+    shortLabel: 'Paski',
+    emoji: '🦓',
+    hint: 'Poziome lub pionowe pasy (np. bretonka, koszula w prążek)',
+  },
+  {
+    id: 'plaid',
+    label: 'W kratkę / pepitkę',
+    shortLabel: 'Kratka',
+    emoji: '🏁',
+    hint: 'Krata szkocka, flanelowa, księcia Walii lub pepitka',
+  },
+  {
+    id: 'floral',
+    label: 'Wzór kwiatowy / artystyczny',
+    shortLabel: 'Kwiaty / Wzór',
+    emoji: '🌸',
+    hint: 'Motywy roślinne, kwiatowe lub wielobarwny print na całości',
+  },
+  {
+    id: 'dots',
+    label: 'Drobny deseń / groszki',
+    shortLabel: 'Drobny wzór',
+    emoji: '⚪',
+    hint: 'Groszki, kropki lub drobny powtarzalny mikro-wzór',
+  },
+];
+
+export const PATTERN_LABELS = Object.fromEntries(
+  PATTERNS.map((p) => [p.id, p.shortLabel])
+) as Record<PatternType, string>;
+
+export const PATTERN_EMOJIS = Object.fromEntries(
+  PATTERNS.map((p) => [p.id, p.emoji])
+) as Record<PatternType, string>;
 
 /** Kolejność od najzimniejszego – używana m.in. przez suwak temperatury. */
 export const TEMP_RANGES: { id: TempRange; label: string; hint: string }[] = [

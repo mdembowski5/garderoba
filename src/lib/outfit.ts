@@ -5,13 +5,14 @@ import type {
   DayPreference,
   Occasion,
   Outfit,
+  PatternType,
   PersonalColorProfile,
   RecommendResult,
   TempRange,
   WeatherData,
 } from '../types';
-import { CATEGORY_LABELS, OCCASION_LABELS } from './constants';
-import { colorHarmony, isVivid } from './palette';
+import { CATEGORY_LABELS, OCCASION_LABELS, PATTERN_LABELS } from './constants';
+import { colorHarmony, garmentHarmony, isVivid } from './palette';
 import {
   evaluateColorForPerson,
   loadPersonalProfile,
@@ -182,6 +183,10 @@ function personalFactor(
   return 1.0;
 }
 
+function isPatterned(item?: Pick<ClothingItem, 'pattern'>): boolean {
+  return Boolean(item?.pattern && item.pattern !== 'solid');
+}
+
 export function computeOutfitScore(
   outfit: {
     top?: ClothingItem;
@@ -193,36 +198,58 @@ export function computeOutfitScore(
   },
   profile?: PersonalColorProfile
 ): number {
-  const primaryColor = outfit.onepiece
-    ? outfit.onepiece.dominantColor
-    : outfit.top?.dominantColor ?? 'Czerń';
-  const secondaryColor = outfit.onepiece
-    ? outfit.onepiece.dominantColor
-    : outfit.bottom?.dominantColor ?? primaryColor;
+  const primaryItem: Pick<ClothingItem, 'dominantColor' | 'secondaryColors' | 'pattern'> =
+    outfit.onepiece ??
+    outfit.top ?? {
+      dominantColor: 'Czerń',
+      secondaryColors: [],
+      pattern: 'solid',
+    };
+  const secondaryItem: Pick<ClothingItem, 'dominantColor' | 'secondaryColors' | 'pattern'> =
+    outfit.onepiece ?? outfit.bottom ?? primaryItem;
 
   const harmonies: number[] = [];
   if (outfit.top && outfit.bottom) {
-    harmonies.push(colorHarmony(outfit.top.dominantColor, outfit.bottom.dominantColor));
+    harmonies.push(garmentHarmony(outfit.top, outfit.bottom).score);
   } else {
     harmonies.push(0.92);
   }
-  if (outfit.shoes) harmonies.push(colorHarmony(outfit.shoes.dominantColor, secondaryColor));
-  if (outfit.outerwear) harmonies.push(colorHarmony(outfit.outerwear.dominantColor, primaryColor));
-  if (outfit.bag) harmonies.push(colorHarmony(outfit.bag.dominantColor, primaryColor));
-  const baseScore = (harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100;
+  if (outfit.shoes) harmonies.push(garmentHarmony(outfit.shoes, secondaryItem).score);
+  if (outfit.outerwear) {
+    const outerH1 = garmentHarmony(outfit.outerwear, primaryItem).score;
+    const outerH2 = garmentHarmony(outfit.outerwear, secondaryItem).score;
+    harmonies.push((outerH1 + outerH2) / 2);
+  }
+  if (outfit.bag) harmonies.push(garmentHarmony(outfit.bag, primaryItem).score);
+
+  // Kara za nadmiar wzorów (3 lub więcej elementów ze wzorem/nadrukiem w jednym zestawie)
+  const patternedCount = [
+    outfit.top,
+    outfit.bottom,
+    outfit.onepiece,
+    outfit.outerwear,
+    outfit.shoes,
+    outfit.bag,
+  ].filter((x) => isPatterned(x)).length;
+
+  let patternPenalty = 0;
+  if (patternedCount >= 3) patternPenalty = 22;
+
+  const baseScore =
+    (harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100 - patternPenalty;
 
   const activeProfile = profile ?? loadPersonalProfile();
-  if (!activeProfile.enabled) return Math.round(baseScore);
+  if (!activeProfile.enabled) return Math.max(25, Math.min(100, Math.round(baseScore)));
 
   const faceItem = outfit.onepiece ?? outfit.top;
-  if (!faceItem) return Math.round(baseScore);
+  if (!faceItem) return Math.max(25, Math.min(100, Math.round(baseScore)));
   const ev = evaluateColorForPerson(
     faceItem.dominantColor,
     faceItem.colorHex,
     faceItem.category,
     activeProfile
   );
-  return Math.max(35, Math.min(100, Math.round(baseScore * 0.85 + ev.matchPercent * 0.15)));
+  return Math.max(25, Math.min(100, Math.round(baseScore * 0.85 + ev.matchPercent * 0.15)));
 }
 
 export function computeSignature(outfit: {
@@ -359,13 +386,20 @@ function buildOutfit(
 
     for (const top of topPool) {
       for (const bottom of bottomPool) {
-        const h = colorHarmony(top.dominantColor, bottom.dominantColor);
+        const gh = garmentHarmony(top, bottom);
+        const h = gh.score;
         const occMatch =
           (occasionsOf(top).includes(occasion) ? 1 : 0.45) *
           (occasionsOf(bottom).includes(occasion) ? 1 : 0.45);
+        // Na eleganckie okazje preferujemy ubrania gładkie lub klasyczny wzór zamiast nadruków t-shirtowych
+        const formalPatternFactor =
+          occasion === 'formal' && (top.pattern === 'print' || bottom.pattern === 'print')
+            ? 0.35
+            : 1.0;
         const w =
           ((tempFit(top, target) + tempFit(bottom, target)) / 2) *
           occMatch *
+          formalPatternFactor *
           personalFactor(top, personalProfile) *
           personalFactor(bottom, personalProfile) *
           wornFactor(top, now) *
@@ -429,8 +463,16 @@ function buildOutfit(
   const bottom = base.kind === 'pair' ? base.bottom : undefined;
   const onepiece = base.kind === 'onepiece' ? base.onepiece : undefined;
 
-  const primaryColor = onepiece ? onepiece.dominantColor : top!.dominantColor;
-  const secondaryColor = onepiece ? onepiece.dominantColor : bottom!.dominantColor;
+  const primaryItem = onepiece ?? top!;
+  const secondaryItem = onepiece ?? bottom!;
+  const baseHasPattern = isPatterned(top) || isPatterned(bottom) || isPatterned(onepiece);
+
+  if (top && bottom) {
+    const pairHarm = garmentHarmony(top, bottom);
+    if (pairHarm.stylistNote && (isPatterned(top) || isPatterned(bottom) || pairHarm.hasColorBridge)) {
+      notes.push(`🎨 ${pairHarm.stylistNote}`);
+    }
+  }
 
   // ----- Okrycie wierzchnie -----
   const allOuter = byCat('outerwear');
@@ -458,14 +500,20 @@ function buildOutfit(
         wet && pool.every((i) => i.isRainproof) ? pool : tempPool(pool, target, notes, 'okryć');
       outerwear = pickWeighted(
         fitted,
-        (o) =>
-          Math.max(0.15, tempFit(o, target)) *
-          ((colorHarmony(o.dominantColor, primaryColor) +
-            colorHarmony(o.dominantColor, secondaryColor)) /
-            2) *
-          prefFactor(pref, o) *
-          personalFactor(o, personalProfile) *
-          wornFactor(o, now),
+        (o) => {
+          const h1 = garmentHarmony(o, primaryItem).score;
+          const h2 = garmentHarmony(o, secondaryItem).score;
+          // Gdy baza ma już wzór/nadruk, preferujemy gładkie okrycie wierzchnie
+          const patternBalance = baseHasPattern && isPatterned(o) ? 0.35 : 1.0;
+          return (
+            Math.max(0.15, tempFit(o, target)) *
+            ((h1 + h2) / 2) *
+            patternBalance *
+            prefFactor(pref, o) *
+            personalFactor(o, personalProfile) *
+            wornFactor(o, now)
+          );
+        },
         rng
       );
     }
@@ -488,8 +536,8 @@ function buildOutfit(
     shoes = pickWeighted(
       pool,
       (s) =>
-        (0.5 * colorHarmony(s.dominantColor, secondaryColor) +
-          0.3 * colorHarmony(s.dominantColor, primaryColor) +
+        (0.5 * garmentHarmony(s, secondaryItem).score +
+          0.3 * garmentHarmony(s, primaryItem).score +
           0.2) *
         tempFit(s, target) *
         prefFactor(pref, s) *
@@ -508,8 +556,8 @@ function buildOutfit(
     bag = pickWeighted(
       bagPool,
       (b) =>
-        (0.45 * colorHarmony(b.dominantColor, primaryColor) +
-          0.35 * (shoes ? colorHarmony(b.dominantColor, shoes.dominantColor) : 0.85) +
+        (0.45 * garmentHarmony(b, primaryItem).score +
+          0.35 * (shoes ? garmentHarmony(b, shoes).score : 0.85) +
           0.2) *
         prefFactor(pref, b) *
         wornFactor(b, now),
@@ -606,16 +654,16 @@ export function swapOutfitPiece(
   const candidates = cleanPool(items.filter((i) => i.category === category && i.id !== currentItem?.id));
   if (candidates.length === 0) return null;
 
-  const anchorColor =
+  const anchorItem: Pick<ClothingItem, 'dominantColor' | 'secondaryColors' | 'pattern'> =
     category === 'top'
-      ? current.bottom?.dominantColor ?? 'Czerń'
-      : current.onepiece?.dominantColor ?? current.top?.dominantColor ?? 'Czerń';
+      ? current.bottom ?? { dominantColor: 'Czerń', pattern: 'solid' }
+      : current.onepiece ?? current.top ?? { dominantColor: 'Czerń', pattern: 'solid' };
 
   const rng = mulberry32(Date.now());
   const picked = pickWeighted(
     candidates,
     (item) => {
-      const h = colorHarmony(item.dominantColor, anchorColor);
+      const h = garmentHarmony(item, anchorItem).score;
       const occ = occasionsOf(item).includes(occasion) ? 1.2 : 0.5;
       return h * h * tempFit(item, target) * occ;
     },
@@ -721,6 +769,9 @@ export interface PurchaseCandidateInput {
   subCategory: string;
   dominantColor: string;
   colorHex: string;
+  secondaryColors?: string[];
+  secondaryColorHexes?: string[];
+  pattern?: PatternType;
   brightnessType: BrightnessType;
   occasions: Occasion[];
 }
@@ -729,6 +780,8 @@ export interface MatchedWardrobeItem {
   item: ClothingItem;
   harmonyPercent: number;
   occasionOverlap: boolean;
+  hasColorBridge?: boolean;
+  stylistNote?: string;
 }
 
 export interface ComplementaryGroupAnalysis {
@@ -819,14 +872,16 @@ export function analyzePurchaseCandidate(
       const inCat = wardrobeItems.filter((i) => i.category === category);
       const scored: MatchedWardrobeItem[] = inCat
         .map((item) => {
-          const h = colorHarmony(candidate.dominantColor, item.dominantColor);
+          const gh = garmentHarmony(candidate, item);
           const itemOcc = occasionsOf(item);
           const occasionOverlap = candidate.occasions.some((o) => itemOcc.includes(o));
-          const effectiveHarmony = Math.round((h * (occasionOverlap ? 1 : 0.88)) * 100);
+          const effectiveHarmony = Math.round((gh.score * (occasionOverlap ? 1 : 0.88)) * 100);
           return {
             item,
             harmonyPercent: Math.min(100, effectiveHarmony),
             occasionOverlap,
+            hasColorBridge: gh.hasColorBridge,
+            stylistNote: gh.stylistNote,
           };
         })
         .filter((m) => m.harmonyPercent >= 68)
@@ -836,7 +891,11 @@ export function analyzePurchaseCandidate(
       if (inCat.length === 0) {
         missingWarning = `Nie masz jeszcze w szafie żadnych ubrań w kategorii „${CATEGORY_LABELS[category]}”.`;
       } else if (scored.length === 0) {
-        missingWarning = `Masz w szafie ${inCat.length} szt. w kategorii „${CATEGORY_LABELS[category]}”, ale żadna nie tworzy spójnej harmonii kolorystycznej z odcieniem „${candidate.dominantColor}”.`;
+        const patLabel =
+          candidate.pattern && candidate.pattern !== 'solid'
+            ? ` i wzorem (${PATTERN_LABELS[candidate.pattern].toLowerCase()})`
+            : '';
+        missingWarning = `Masz w szafie ${inCat.length} szt. w kategorii „${CATEGORY_LABELS[category]}”, ale żadna nie tworzy spójnej harmonii z odcieniem „${candidate.dominantColor}”${patLabel}.`;
       }
 
       return {
@@ -880,8 +939,12 @@ export function analyzePurchaseCandidate(
   }
 
   // Sprawdzamy duplikaty w szafie
+  const candPattern = candidate.pattern ?? 'solid';
   const similarItems = wardrobeItems.filter(
-    (i) => i.category === candidate.category && i.dominantColor === candidate.dominantColor
+    (i) =>
+      i.category === candidate.category &&
+      i.dominantColor === candidate.dominantColor &&
+      (i.pattern ?? 'solid') === candPattern
   );
 
   // Ocena dopasowania do szafy (0..100)
@@ -918,7 +981,7 @@ export function analyzePurchaseCandidate(
 
   if (personalEval.tier === 'power') {
     pros.push(
-      `Kolor „${candidate.dominantColor}” należy do Twoich najlepszych barw (${personalEval.season.emoji} ${personalEval.season.name}).`
+      `Kolor główny „${candidate.dominantColor}” należy do Twoich najlepszych barw (${personalEval.season.emoji} ${personalEval.season.name}).`
     );
   } else if (personalEval.tier === 'good') {
     pros.push(
@@ -928,6 +991,30 @@ export function analyzePurchaseCandidate(
     warnings.push(
       `Kolor „${candidate.dominantColor}” blisko twarzy nie jest optymalny dla Twojego typu urody (${personalEval.season.name}).`
     );
+  }
+
+  if (candPattern !== 'solid') {
+    const solidMatches = requiredGroups.reduce(
+      (s, g) => s + g.matchingItems.filter((m) => (m.item.pattern ?? 'solid') === 'solid').length,
+      0
+    );
+    const bridgeMatches = requiredGroups.reduce(
+      (s, g) => s + g.matchingItems.filter((m) => m.hasColorBridge).length,
+      0
+    );
+    if (solidMatches > 0) {
+      pros.push(
+        `Zasady łączenia wzorów (${PATTERN_LABELS[candPattern]}): masz w szafie ${solidMatches} gładkich ubrań do pary${
+          bridgeMatches > 0
+            ? `, w tym ${bridgeMatches} powtarzających kolor wzoru/nadruku (most kolorystyczny)`
+            : ''
+        }.`
+      );
+    } else if (wardrobeItems.length > 0) {
+      warnings.push(
+        `Ubranie ma wzór/nadruk (${PATTERN_LABELS[candPattern]}), a w szafie brakuje gładkich ubrań bazowych, które by go uspokoiły.`
+      );
+    }
   }
 
   for (const g of requiredGroups) {

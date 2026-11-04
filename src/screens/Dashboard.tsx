@@ -262,8 +262,8 @@ export default function Dashboard({
             <Shirt size={36} className="mx-auto mb-3 text-accent-400" />
             <h2 className="font-bold">Twoja szafa jest pusta</h2>
             <p className="mt-1 text-sm text-ink-400">
-              Dodaj własne ubrania lub jednym kliknięciem załaduj gotową szafę testową (27 ubrań),
-              aby przetestować działanie aplikacji.
+              Dodaj własne ubrania lub jednym kliknięciem załaduj gotową szafę testową (37 ubrań, w tym
+              wielokolorowe, z nadrukiem i ze wzorem), aby przetestować działanie aplikacji.
             </p>
             <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
               <button
@@ -283,7 +283,7 @@ export default function Dashboard({
                   </>
                 ) : (
                   <>
-                    <Sparkles size={18} /> Załaduj szafę testową (27)
+                    <Sparkles size={18} /> Załaduj szafę testową (37)
                   </>
                 )}
               </button>
@@ -346,7 +346,7 @@ export default function Dashboard({
                   </>
                 ) : (
                   <>
-                    <Sparkles size={18} /> Załaduj szafę testową (27)
+                    <Sparkles size={18} /> Załaduj szafę testową (37)
                   </>
                 )}
               </button>

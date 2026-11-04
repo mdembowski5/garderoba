@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Droplets, Heart, Loader2, Plus, Sparkles, Trash2, WashingMachine } from 'lucide-react';
-import type { BrightnessType, Category, ClothingItem, Occasion } from '../types';
+import type {
+  BrightnessType,
+  Category,
+  ClothingItem,
+  Occasion,
+  PatternType,
+} from '../types';
 import { clearLaundry, db, deleteItem, updateItem } from '../lib/db';
 import { seedDemoWardrobe } from '../lib/demoWardrobe';
 import {
@@ -10,11 +16,14 @@ import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   OCCASIONS,
+  PATTERNS,
+  PATTERN_EMOJIS,
+  PATTERN_LABELS,
   SUBCATEGORIES,
   TEMP_RANGES,
 } from '../lib/constants';
 import { PALETTE, brightnessOfHex } from '../lib/palette';
-import { BottomSheet, Chip, ColorDot, ItemImage } from '../components/ui';
+import { BottomSheet, Chip, ColorDot, ColorDots, ItemImage } from '../components/ui';
 import type { Tab } from '../components/TabBar';
 
 type CatFilter = 'all' | 'fav' | 'laundry' | Category;
@@ -138,10 +147,59 @@ export default function Wardrobe({
   const changeColor = async (name: string, hex: string) => {
     if (!selected) return;
     const brightnessType = brightnessOfHex(hex);
+    const curSec = selected.secondaryColors ?? [];
+    const curHexes = selected.secondaryColorHexes ?? [];
+    const idx = curSec.indexOf(name);
+    const secondaryColors = idx !== -1 ? curSec.filter((_, i) => i !== idx) : curSec;
+    const secondaryColorHexes = idx !== -1 ? curHexes.filter((_, i) => i !== idx) : curHexes;
     setSelected((prev) =>
-      prev ? { ...prev, dominantColor: name, colorHex: hex, brightnessType } : prev
+      prev
+        ? {
+            ...prev,
+            dominantColor: name,
+            colorHex: hex,
+            brightnessType,
+            secondaryColors,
+            secondaryColorHexes,
+          }
+        : prev
     );
-    await updateItem(selected.id, { dominantColor: name, colorHex: hex, brightnessType });
+    await updateItem(selected.id, {
+      dominantColor: name,
+      colorHex: hex,
+      brightnessType,
+      secondaryColors,
+      secondaryColorHexes,
+    });
+  };
+
+  const toggleSecondaryColor = async (name: string, hex: string) => {
+    if (!selected || name === selected.dominantColor) return;
+    const curSec = selected.secondaryColors ?? [];
+    const curHexes = selected.secondaryColorHexes ?? [];
+    const idx = curSec.indexOf(name);
+    let secondaryColors: string[];
+    let secondaryColorHexes: string[];
+    if (idx !== -1) {
+      secondaryColors = curSec.filter((_, i) => i !== idx);
+      secondaryColorHexes = curHexes.filter((_, i) => i !== idx);
+    } else if (curSec.length < 2) {
+      secondaryColors = [...curSec, name];
+      secondaryColorHexes = [...curHexes, hex];
+    } else {
+      secondaryColors = [curSec[1], name];
+      secondaryColorHexes = [curHexes[1], hex];
+    }
+    setSelected((prev) =>
+      prev ? { ...prev, secondaryColors, secondaryColorHexes } : prev
+    );
+    await updateItem(selected.id, { secondaryColors, secondaryColorHexes });
+  };
+
+  const changePattern = async (newPattern: PatternType) => {
+    if (!selected) return;
+    setSelected((prev) => (prev ? { ...prev, pattern: newPattern } : prev));
+    await updateItem(selected.id, { pattern: newPattern });
   };
 
   const remove = async () => {
@@ -244,7 +302,7 @@ export default function Wardrobe({
                   </>
                 ) : (
                   <>
-                    <Sparkles size={18} /> Załaduj szafę testową (27)
+                    <Sparkles size={18} /> Załaduj szafę testową (37)
                   </>
                 )}
               </button>
@@ -284,9 +342,17 @@ export default function Wardrobe({
                     {item.wearCount}×
                   </span>
                 )}
+                {!item.inLaundry && item.pattern && item.pattern !== 'solid' && (
+                  <span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white/90 backdrop-blur-sm">
+                    {PATTERN_EMOJIS[item.pattern]} {PATTERN_LABELS[item.pattern]}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5 px-2.5 py-2 text-[12px]">
-                <ColorDot hex={item.colorHex} />
+                <ColorDots
+                  primaryHex={item.colorHex}
+                  secondaryHexes={item.secondaryColorHexes}
+                />
                 <span className="truncate font-medium">{item.subCategory}</span>
               </div>
             </button>
@@ -338,9 +404,25 @@ export default function Wardrobe({
 
               <dl className="min-w-0 flex-1 space-y-1.5 text-xs sm:text-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="text-ink-400">Kolor</dt>
+                  <dt className="text-ink-400">Kolory</dt>
                   <dd className="flex items-center gap-1.5 truncate font-medium">
-                    <ColorDot hex={selected.colorHex} /> {selected.dominantColor}
+                    <ColorDots
+                      primaryHex={selected.colorHex}
+                      secondaryHexes={selected.secondaryColorHexes}
+                    />
+                    <span className="truncate">
+                      {selected.dominantColor}
+                      {selected.secondaryColors && selected.secondaryColors.length > 0
+                        ? ` + ${selected.secondaryColors.join(', ')}`
+                        : ''}
+                    </span>
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-400">Wzór</dt>
+                  <dd className="truncate">
+                    {PATTERN_EMOJIS[selected.pattern ?? 'solid']}{' '}
+                    {PATTERN_LABELS[selected.pattern ?? 'solid']}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
@@ -427,7 +509,24 @@ export default function Wardrobe({
 
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
-                Zmień kolor
+                Wzór / Powierzchnia (dotknij, aby zmienić)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {PATTERNS.map((pt) => (
+                  <Chip
+                    key={pt.id}
+                    active={(selected.pattern ?? 'solid') === pt.id}
+                    onClick={() => changePattern(pt.id)}
+                  >
+                    {pt.emoji} {pt.shortLabel}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                Kolor główny
               </div>
               <div className="grid grid-cols-5 gap-x-1.5 gap-y-2.5">
                 {PALETTE.map((p) => {
@@ -452,6 +551,32 @@ export default function Wardrobe({
                       >
                         {p.name}
                       </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                Dodatkowe kolory (wielokolorowość – maks. 2)
+              </div>
+              <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 py-0.5">
+                {PALETTE.filter((p) => p.name !== selected.dominantColor).map((p) => {
+                  const active = (selected.secondaryColors ?? []).includes(p.name);
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => toggleSecondaryColor(p.name, p.hex)}
+                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                        active
+                          ? 'bg-accent-500 text-white shadow'
+                          : 'bg-ink-800 text-ink-300 active:bg-ink-700'
+                      }`}
+                    >
+                      <ColorDot hex={p.hex} size={11} />
+                      {p.name}
                     </button>
                   );
                 })}

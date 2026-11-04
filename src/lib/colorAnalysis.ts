@@ -1,4 +1,4 @@
-import type { BrightnessType, Category } from '../types';
+import type { BrightnessType, Category, PatternType } from '../types';
 import { loadImage } from './image';
 import {
   classifyBrightness,
@@ -24,6 +24,11 @@ export interface ColorAnalysis {
   brightness: BrightnessType;
   paletteName: string;
   paletteHex: string;
+  /** Dodatkowe kolory wykryte na ubraniu (wielokolorowość / barwy wzoru lub nadruku) */
+  secondaryColors: string[];
+  secondaryColorHexes: string[];
+  /** Automatycznie wykryty typ powierzchni: gładkie, nadruk, paski, kratka, kwiaty, drobny wzór */
+  suggestedPattern: PatternType;
   /** Odsetek pikseli zaklasyfikowanych jako ubranie (0..1) */
   foregroundRatio: number;
   /** Sugerowana kategoria na podstawie kształtu sylwetki ubrania */
@@ -995,6 +1000,62 @@ export function analyzePixels(
 
   const L = luminance(r, g, b);
   const palette = nearestPaletteColor(r, g, b);
+  const [primL, primA, primB] = srgbToLab(r, g, b);
+
+  // Wykrywanie wielokolorowości (dodatkowe kolory zajmujące istotną część powierzchni ubrania)
+  const paletteBuckets = new Map<
+    string,
+    { name: string; hex: string; w: number; sumL: number; sumA: number; sumB: number }
+  >();
+  let totalSampleW = 0;
+  for (const p of fgSamples) {
+    totalSampleW += p.w;
+    const near = nearestPaletteColor(p.r, p.g, p.b);
+    const prev = paletteBuckets.get(near.name);
+    if (prev) {
+      prev.w += p.w;
+      prev.sumL += p.L * p.w;
+      prev.sumA += p.a * p.w;
+      prev.sumB += p.bLab * p.w;
+    } else {
+      paletteBuckets.set(near.name, {
+        name: near.name,
+        hex: near.hex,
+        w: p.w,
+        sumL: p.L * p.w,
+        sumA: p.a * p.w,
+        sumB: p.bLab * p.w,
+      });
+    }
+  }
+
+  const secondaryCandidates = Array.from(paletteBuckets.values())
+    .filter((bucket) => {
+      if (bucket.name === palette.name) return false;
+      const share = totalSampleW > 0 ? bucket.w / totalSampleW : 0;
+      if (share < 0.095) return false;
+      const mL = bucket.sumL / bucket.w;
+      const mA = bucket.sumA / bucket.w;
+      const mB = bucket.sumB / bucket.w;
+      // Odrzucamy cienie/rozjaśnienia tego samego koloru bazowego
+      return shadowAwareLabDist(mL, mA, mB, primL, primA, primB) > 16.5;
+    })
+    .sort((a, b) => b.w - a.w)
+    .slice(0, 2);
+
+  const secondaryColors = secondaryCandidates.map((c) => c.name);
+  const secondaryColorHexes = secondaryCandidates.map((c) => c.hex);
+
+  const suggestedPattern = detectGarmentPattern(
+    data,
+    mask,
+    width,
+    height,
+    minMaskThresh,
+    [primL, primA, primB],
+    secondaryColors.length
+  );
+
   const shape = suggestShapeFromMask(mask, width, height, origWidth, origHeight, palette.name);
 
   return {
@@ -1006,8 +1067,172 @@ export function analyzePixels(
     brightness: classifyBrightness(L),
     paletteName: palette.name,
     paletteHex: palette.hex,
+    secondaryColors,
+    secondaryColorHexes,
+    suggestedPattern,
     foregroundRatio: fgPixelCount / total,
     suggestedCategory: shape.category,
     suggestedSubCategory: shape.subCategory,
   };
+}
+
+/**
+ * Automatyczna klasyfikacja wzoru/nadruku na podstawie rozkładu przestrzennego barw
+ * oraz kierunkowości gradientów wewnątrz sylwetki ubrania.
+ */
+function detectGarmentPattern(
+  data: Uint8ClampedArray | number[],
+  mask: Float32Array,
+  width: number,
+  height: number,
+  minMaskThresh: number,
+  primaryLab: [number, number, number],
+  secondaryCount: number
+): PatternType {
+  let minX = width;
+  let maxX = 0;
+  let minY = height;
+  let maxY = 0;
+
+  const cellL = new Float32Array(width * height);
+  const cellA = new Float32Array(width * height);
+  const cellB = new Float32Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (mask[i] < minMaskThresh) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      const idx = i * 4;
+      const [L, a, b] = srgbToLab(data[idx], data[idx + 1], data[idx + 2]);
+      cellL[i] = L;
+      cellA[i] = a;
+      cellB[i] = b;
+    }
+  }
+
+  const bboxW = Math.max(1, maxX - minX + 1);
+  const bboxH = Math.max(1, maxY - minY + 1);
+
+  let interiorCount = 0;
+  let contrastPixels = 0;
+  let edgePixels = 0;
+  let sumDx = 0;
+  let sumDy = 0;
+
+  let centerTotal = 0;
+  let centerActive = 0;
+  let outerTotal = 0;
+  let outerActive = 0;
+
+  for (let y = minY + 2; y <= maxY - 2; y++) {
+    for (let x = minX + 2; x <= maxX - 2; x++) {
+      const i = y * width + x;
+      // Bierzemy pod uwagę wyłącznie wnętrze ubrania (z dala od zewnętrznego konturu)
+      if (
+        mask[i] < minMaskThresh ||
+        mask[i - 1] < minMaskThresh ||
+        mask[i + 1] < minMaskThresh ||
+        mask[i - width] < minMaskThresh ||
+        mask[i + width] < minMaskThresh
+      ) {
+        continue;
+      }
+
+      interiorCount++;
+      const right = i + 1;
+      const down = i + width;
+
+      const dx = Math.hypot(
+        0.55 * (cellL[right] - cellL[i]),
+        cellA[right] - cellA[i],
+        cellB[right] - cellB[i]
+      );
+      const dy = Math.hypot(
+        0.55 * (cellL[down] - cellL[i]),
+        cellA[down] - cellA[i],
+        cellB[down] - cellB[i]
+      );
+
+      sumDx += dx;
+      sumDy += dy;
+
+      const dPrim = shadowAwareLabDist(
+        cellL[i],
+        cellA[i],
+        cellB[i],
+        primaryLab[0],
+        primaryLab[1],
+        primaryLab[2]
+      );
+
+      const isContrast = dPrim > 17.5;
+      const isEdge = dx > 10.5 || dy > 10.5;
+      if (isContrast) contrastPixels++;
+      if (isEdge) edgePixels++;
+
+      const rx = (x - minX) / bboxW;
+      const ry = (y - minY) / bboxH;
+      const inChestCenter = rx >= 0.25 && rx <= 0.75 && ry >= 0.16 && ry <= 0.68;
+
+      if (inChestCenter) {
+        centerTotal++;
+        if (isContrast || isEdge) centerActive++;
+      } else {
+        outerTotal++;
+        if (isContrast || isEdge) outerActive++;
+      }
+    }
+  }
+
+  if (interiorCount < 25) return 'solid';
+
+  const contrastRate = contrastPixels / interiorCount;
+  const edgeRate = edgePixels / interiorCount;
+  const centerRate = centerTotal > 0 ? centerActive / centerTotal : 0;
+  const outerRate = outerTotal > 0 ? outerActive / outerTotal : 0;
+
+  // 1. Gładkie ubranie (brak dodatkowych barw i niska liczba krawędzi wewnętrznych)
+  if (contrastRate < 0.08 && edgeRate < 0.095 && secondaryCount === 0) {
+    return 'solid';
+  }
+
+  // 2. Lokalny nadruk / grafika / logo (kontrast skupiony na klatce piersiowej, a boki/rękawy są gładkie)
+  if (centerRate >= 0.15 && outerRate < 0.095 && centerRate > outerRate * 1.95) {
+    return 'print';
+  }
+
+  // 3. Wzór na całej powierzchni ubrania
+  if (edgeRate >= 0.105 || contrastRate >= 0.11 || secondaryCount >= 1) {
+    const anisotropy = Math.max(sumDx, sumDy) / Math.max(0.001, Math.min(sumDx, sumDy));
+
+    // Wyraźna kierunkowość pozioma lub pionowa -> Paski / prążki
+    if (anisotropy >= 1.32) {
+      return 'stripes';
+    }
+
+    // Równomierna siatka w pionie i poziomie przy zauważalnej gęstości krawędzi -> Kratka / pepitka
+    if (anisotropy <= 1.24 && edgeRate >= 0.17 && secondaryCount >= 1) {
+      return 'plaid';
+    }
+
+    // Wielobarwny wzór organiczny -> Kwiaty / wzór artystyczny
+    if (secondaryCount >= 2 || contrastRate >= 0.27) {
+      return 'floral';
+    }
+
+    // Drobny deseń / groszki
+    if (edgeRate >= 0.12) {
+      return 'dots';
+    }
+
+    if (centerRate > outerRate * 1.5) {
+      return 'print';
+    }
+  }
+
+  return 'solid';
 }

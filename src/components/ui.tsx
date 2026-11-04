@@ -57,6 +57,34 @@ export function ColorDot({ hex, size = 12 }: { hex: string; size?: number }) {
   );
 }
 
+/** Wyświetla kropkę koloru głównego oraz opcjonalne nałożone kropki kolorów dodatkowych. */
+export function ColorDots({
+  primaryHex,
+  secondaryHexes,
+  size = 12,
+}: {
+  primaryHex: string;
+  secondaryHexes?: string[];
+  size?: number;
+}) {
+  const sec = secondaryHexes?.filter(Boolean) ?? [];
+  if (sec.length === 0) {
+    return <ColorDot hex={primaryHex} size={size} />;
+  }
+  return (
+    <span className="inline-flex shrink-0 items-center -space-x-1">
+      <ColorDot hex={primaryHex} size={size} />
+      {sec.slice(0, 2).map((h, idx) => (
+        <span
+          key={`${h}-${idx}`}
+          className="inline-block shrink-0 rounded-full ring-1 ring-ink-900"
+          style={{ width: Math.max(9, size - 1), height: Math.max(9, size - 1), backgroundColor: h }}
+        />
+      ))}
+    </span>
+  );
+}
+
 const ICONS: Record<WeatherKind, LucideIcon> = {
   clear: Sun,
   partly: CloudSun,

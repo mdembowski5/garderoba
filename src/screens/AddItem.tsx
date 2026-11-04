@@ -9,7 +9,7 @@ import {
   RotateCcw,
   Sparkles,
 } from 'lucide-react';
-import type { BrightnessType, Category, Occasion, TempRange } from '../types';
+import type { BrightnessType, Category, Occasion, PatternType, TempRange } from '../types';
 import { addItem } from '../lib/db';
 import { compressImage, removeBackgroundImage, type CompressedImage } from '../lib/image';
 import { analyzeImage, type ColorAnalysis, type Point2D } from '../lib/colorAnalysis';
@@ -25,10 +25,13 @@ import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   OCCASIONS,
+  PATTERNS,
+  PATTERN_EMOJIS,
+  PATTERN_LABELS,
   SUBCATEGORIES,
   TEMP_RANGES,
 } from '../lib/constants';
-import { Chip, ColorDot, Segmented } from '../components/ui';
+import { Chip, ColorDot, ColorDots, Segmented } from '../components/ui';
 
 interface Draft {
   original: CompressedImage;
@@ -68,6 +71,9 @@ export default function AddItem({
   const [occasions, setOccasions] = useState<Occasion[]>(SUBCATEGORIES.top[0].occasions);
   const [colorName, setColorName] = useState('');
   const [colorHex, setColorHex] = useState('#808080');
+  const [secondaryColors, setSecondaryColors] = useState<string[]>([]);
+  const [secondaryColorHexes, setSecondaryColorHexes] = useState<string[]>([]);
+  const [pattern, setPattern] = useState<PatternType>('solid');
   const [brightness, setBrightness] = useState<BrightnessType>('neutral');
   const [colorEdited, setColorEdited] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -111,6 +117,9 @@ export default function AddItem({
     setError(null);
     setColorEdited(false);
     setFocusPoint(null);
+    setSecondaryColors([]);
+    setSecondaryColorHexes([]);
+    setPattern('solid');
     chooseCategory('top');
   };
 
@@ -136,6 +145,9 @@ export default function AddItem({
       });
       setColorName(analysis.paletteName);
       setColorHex(analysis.hex);
+      setSecondaryColors(analysis.secondaryColors);
+      setSecondaryColorHexes(analysis.secondaryColorHexes);
+      setPattern(analysis.suggestedPattern);
       setBrightness(analysis.brightness);
       setColorEdited(false);
       chooseCategory(analysis.suggestedCategory, analysis.suggestedSubCategory);
@@ -169,6 +181,9 @@ export default function AddItem({
       });
       setColorName(analysis.paletteName);
       setColorHex(analysis.hex);
+      setSecondaryColors(analysis.secondaryColors);
+      setSecondaryColorHexes(analysis.secondaryColorHexes);
+      setPattern(analysis.suggestedPattern);
       setBrightness(analysis.brightness);
       setColorEdited(false);
     } finally {
@@ -181,6 +196,27 @@ export default function AddItem({
     setColorHex(hex);
     setBrightness(brightnessOfHex(hex));
     setColorEdited(true);
+    // Jeśli wybrany kolor główny był w kolorach dodatkowych – usuń go z dodatkowych
+    const idx = secondaryColors.indexOf(name);
+    if (idx !== -1) {
+      setSecondaryColors((prev) => prev.filter((_, i) => i !== idx));
+      setSecondaryColorHexes((prev) => prev.filter((_, i) => i !== idx));
+    }
+  };
+
+  const toggleSecondaryColor = (name: string, hex: string) => {
+    if (name === colorName) return;
+    const idx = secondaryColors.indexOf(name);
+    if (idx !== -1) {
+      setSecondaryColors((prev) => prev.filter((_, i) => i !== idx));
+      setSecondaryColorHexes((prev) => prev.filter((_, i) => i !== idx));
+    } else if (secondaryColors.length < 2) {
+      setSecondaryColors((prev) => [...prev, name]);
+      setSecondaryColorHexes((prev) => [...prev, hex]);
+    } else {
+      setSecondaryColors((prev) => [prev[1], name]);
+      setSecondaryColorHexes((prev) => [prev[1], hex]);
+    }
   };
 
   const onCustomHexChange = (hex: string) => {
@@ -206,6 +242,9 @@ export default function AddItem({
         isRainproof: rainproof,
         dominantColor: colorName,
         colorHex,
+        secondaryColors,
+        secondaryColorHexes,
+        pattern,
         brightnessType: brightness,
         occasions: occasions.length ? occasions : ['casual'],
       });
@@ -328,13 +367,22 @@ export default function AddItem({
                   : 'Wykryty kolor i fason'}
               </div>
               <div className="flex items-center gap-2 text-base font-semibold">
-                <ColorDot hex={colorHex} size={18} /> {colorName}
+                <ColorDots
+                  primaryHex={colorHex}
+                  secondaryHexes={secondaryColorHexes}
+                  size={18}
+                />
+                <span className="truncate">
+                  {colorName}
+                  {secondaryColors.length > 0 ? ` + ${secondaryColors.join(', ')}` : ''}
+                </span>
               </div>
               <div className="truncate text-xs font-medium text-accent-300">
                 {CATEGORY_EMOJIS[category]} {CATEGORY_LABELS[category]} · {subCategory}
               </div>
               <div className="text-xs text-ink-300">
-                Jasność: {BRIGHTNESS_LABELS[brightness].toLowerCase()}
+                Wzór: {PATTERN_EMOJIS[pattern]} {PATTERN_LABELS[pattern]} · Jasność:{' '}
+                {BRIGHTNESS_LABELS[brightness].toLowerCase()}
               </div>
               <div className="flex flex-wrap gap-1.5 pt-0.5">
                 <button
@@ -382,7 +430,21 @@ export default function AddItem({
             </div>
           </Field>
 
-          <Field label="Kolor dominujący (20 odcieni lub dotknij ubrania na zdjęciu)">
+          <Field label="Powierzchnia: gładkie, z nadrukiem czy ze wzorem? (wykryto automatycznie)">
+            <div className="flex flex-wrap gap-2">
+              {PATTERNS.map((pt) => (
+                <Chip
+                  key={pt.id}
+                  active={pattern === pt.id}
+                  onClick={() => setPattern(pt.id)}
+                >
+                  {pt.emoji} {pt.label}
+                </Chip>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Kolor dominujący (główny kolor tła ubrania)">
             <div className="grid grid-cols-5 gap-y-3 gap-x-2">
               {PALETTE.map((p) => {
                 const active = p.name === colorName;
@@ -422,6 +484,41 @@ export default function AddItem({
                   className="sr-only"
                 />
               </label>
+            </div>
+          </Field>
+
+          <Field label="Dodatkowe kolory (wielokolorowość / barwy wzoru lub nadruku – maks. 2)">
+            <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 py-1">
+              {secondaryColors.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSecondaryColors([]);
+                    setSecondaryColorHexes([]);
+                  }}
+                  className="shrink-0 rounded-full bg-ink-800 px-3 py-1.5 text-xs font-medium text-ink-300 active:bg-ink-700"
+                >
+                  ✕ Jednokolorowe
+                </button>
+              )}
+              {PALETTE.filter((p) => p.name !== colorName).map((p) => {
+                const active = secondaryColors.includes(p.name);
+                return (
+                  <button
+                    key={p.name}
+                    type="button"
+                    onClick={() => toggleSecondaryColor(p.name, p.hex)}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      active
+                        ? 'bg-accent-500 text-white shadow'
+                        : 'bg-ink-800 text-ink-300 active:bg-ink-700'
+                    }`}
+                  >
+                    <ColorDot hex={p.hex} size={11} />
+                    {p.name}
+                  </button>
+                );
+              })}
             </div>
           </Field>
 

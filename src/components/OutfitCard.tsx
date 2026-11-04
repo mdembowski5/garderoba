@@ -1,7 +1,7 @@
 import { Heart, Info, Lock, RefreshCw, Umbrella, Unlock } from 'lucide-react';
 import type { Category, ClothingItem, Outfit } from '../types';
-import { CATEGORY_LABELS } from '../lib/constants';
-import { ColorDot, ItemImage } from './ui';
+import { CATEGORY_LABELS, PATTERN_EMOJIS, PATTERN_LABELS } from '../lib/constants';
+import { ColorDots, ItemImage } from './ui';
 
 function Piece({
   item,
@@ -61,10 +61,20 @@ function Piece({
             <RefreshCw size={13} />
           </button>
         )}
+
+        {item.pattern && item.pattern !== 'solid' && (
+          <span className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white/90 backdrop-blur-sm">
+            {PATTERN_EMOJIS[item.pattern]} {PATTERN_LABELS[item.pattern]}
+          </span>
+        )}
       </div>
 
       <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-ink-300">
-        <ColorDot hex={item.colorHex} size={10} />
+        <ColorDots
+          primaryHex={item.colorHex}
+          secondaryHexes={item.secondaryColorHexes}
+          size={10}
+        />
         <span className="truncate">
           <span className="font-semibold text-white">{label}</span> · {item.subCategory}
         </span>

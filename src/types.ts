@@ -13,6 +13,15 @@ export type DayPreference = 'light' | 'dark' | 'any';
 /** Okazja / przeznaczenie ubrania. */
 export type Occasion = 'casual' | 'work' | 'party' | 'formal' | 'sport';
 
+/** Klasyfikacja powierzchni ubrania: gładkie, z nadrukiem lub ze wzorem. */
+export type PatternType =
+  | 'solid' // gładkie (jednolite)
+  | 'print' // z nadrukiem / grafiką / logo
+  | 'stripes' // w paski / prążki
+  | 'plaid' // w kratkę / pepitkę
+  | 'floral' // wzór kwiatowy / roślinny / artystyczny
+  | 'dots'; // drobny deseń / groszki / mikro-wzór
+
 export interface ClothingItem {
   id: string; // UUID
   imageBlob?: Blob; // opcjonalny Blob (dla kompatybilności wstecznej)
@@ -21,8 +30,11 @@ export interface ClothingItem {
   subCategory: string;
   tempRange: TempRange;
   isRainproof: boolean;
-  dominantColor: string; // nazwa z palety, np. "Brąz", "Karmel / Camel", "Granat"
+  dominantColor: string; // główny kolor z palety, np. "Brąz", "Karmel / Camel", "Granat"
   colorHex: string; // np. "#6b442a"
+  secondaryColors?: string[]; // dodatkowe kolory (wielokolorowość / barwy wzoru lub nadruku)
+  secondaryColorHexes?: string[]; // HEX-y dodatkowych kolorów
+  pattern?: PatternType; // gładkie / nadruk / paski / kratka / kwiaty / drobny wzór
   brightnessType: BrightnessType;
   occasions: Occasion[]; // do jakich okazji pasuje (może być kilka)
   createdAt: number;

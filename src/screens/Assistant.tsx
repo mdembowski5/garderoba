@@ -574,8 +574,9 @@ function StatsAndBackupView({
           <Sparkles size={18} className="text-accent-400" /> Szafa testowa (Demo)
         </h2>
         <p className="mt-1 text-xs text-ink-400">
-          Załaduj 27 gotowych, wyrenderowanych ubrań (góra, dół, sukienki, okrycia, buty, torebki i
-          dodatki na każdą pogodę i okazję), aby od razu przetestować wszystkie funkcje aplikacji.
+          Załaduj 37 gotowych, wyrenderowanych ubrań (w tym wielokolorowych, z nadrukiem i ze wzorem:
+          w paski, kratę, kwiaty oraz groszki), aby od razu przetestować jakość doboru i łączenia
+          wzorów.
         </p>
         <div className="mt-3 flex flex-col gap-2.5 sm:flex-row">
           <button
@@ -585,11 +586,11 @@ function StatsAndBackupView({
           >
             {seeding ? (
               <>
-                <Loader2 size={16} className="animate-spin" /> Generowanie 27 ubrań...
+                <Loader2 size={16} className="animate-spin" /> Generowanie 37 ubrań...
               </>
             ) : (
               <>
-                <Sparkles size={16} /> Załaduj szafę testową (27 ubrań)
+                <Sparkles size={16} /> Załaduj szafę testową (37 ubrań)
               </>
             )}
           </button>

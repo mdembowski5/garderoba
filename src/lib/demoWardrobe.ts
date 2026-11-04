@@ -1,4 +1,11 @@
-import type { BrightnessType, Category, ClothingItem, Occasion, TempRange } from '../types';
+import type {
+  BrightnessType,
+  Category,
+  ClothingItem,
+  Occasion,
+  PatternType,
+  TempRange,
+} from '../types';
 import { db, newId } from './db';
 import { blobToDataUrl } from './image';
 import { hexToRgb, rgbToHex } from './palette';
@@ -32,6 +39,9 @@ interface DemoSpec {
   subCategory: string;
   dominantColor: string;
   colorHex: string;
+  secondaryColors?: string[];
+  secondaryColorHexes?: string[];
+  pattern?: PatternType;
   brightnessType: BrightnessType;
   tempRange: TempRange;
   occasions: Occasion[];
@@ -358,7 +368,139 @@ const DEMO_ITEMS: DemoSpec[] = [
     brightnessType: 'light',
     tempRange: 'cold',
     occasions: ['casual', 'work', 'formal'],
-    wearCount: 2,
+    wearCount: 0,
+    silhouette: 'scarf',
+  },
+
+  // ---- UBRANIA WIELOKOLOROWE, Z NADRUKIEM I ZE WZOREM (10) ----
+  {
+    category: 'top',
+    subCategory: 'bluzka w paski (bretonka)',
+    dominantColor: 'Biel',
+    colorHex: '#f5f5f3',
+    secondaryColors: ['Granat'],
+    secondaryColorHexes: ['#1d2d50'],
+    pattern: 'stripes',
+    brightnessType: 'light',
+    tempRange: 'mild',
+    occasions: ['casual', 'work'],
+    silhouette: 'tshirt',
+  },
+  {
+    category: 'top',
+    subCategory: 't-shirt z nadrukiem',
+    dominantColor: 'Czerń',
+    colorHex: '#18191e',
+    secondaryColors: ['Pomarańczowy / Koral', 'Biel'],
+    secondaryColorHexes: ['#e06d3b', '#ffffff'],
+    pattern: 'print',
+    brightnessType: 'dark',
+    tempRange: 'hot',
+    occasions: ['casual', 'party', 'sport'],
+    silhouette: 'tshirt',
+  },
+  {
+    category: 'top',
+    subCategory: 'koszula w kratę',
+    dominantColor: 'Granat',
+    colorHex: '#1d2d50',
+    secondaryColors: ['Czerwień', 'Biel'],
+    secondaryColorHexes: ['#c9332b', '#f3f4f6'],
+    pattern: 'plaid',
+    brightnessType: 'dark',
+    tempRange: 'cool',
+    occasions: ['casual', 'work'],
+    silhouette: 'shirt',
+  },
+  {
+    category: 'top',
+    subCategory: 'koszula w prążki',
+    dominantColor: 'Błękit',
+    colorHex: '#7bb2e0',
+    secondaryColors: ['Biel'],
+    secondaryColorHexes: ['#ffffff'],
+    pattern: 'stripes',
+    brightnessType: 'light',
+    tempRange: 'mild',
+    occasions: ['work', 'formal', 'casual'],
+    silhouette: 'shirt',
+  },
+  {
+    category: 'bottom',
+    subCategory: 'spodnie w kratę',
+    dominantColor: 'Szarość',
+    colorHex: '#8e9299',
+    secondaryColors: ['Grafit', 'Błękit'],
+    secondaryColorHexes: ['#3d4148', '#7bb2e0'],
+    pattern: 'plaid',
+    brightnessType: 'neutral',
+    tempRange: 'mild',
+    occasions: ['work', 'formal', 'casual'],
+    silhouette: 'trousers',
+  },
+  {
+    category: 'bottom',
+    subCategory: 'spódnica w groszki',
+    dominantColor: 'Granat',
+    colorHex: '#1d2d50',
+    secondaryColors: ['Biel'],
+    secondaryColorHexes: ['#ffffff'],
+    pattern: 'dots',
+    brightnessType: 'dark',
+    tempRange: 'hot',
+    occasions: ['casual', 'party', 'work'],
+    silhouette: 'skirt',
+  },
+  {
+    category: 'onepiece',
+    subCategory: 'sukienka w kwiaty',
+    dominantColor: 'Zieleń butelkowa',
+    colorHex: '#1b4332',
+    secondaryColors: ['Róż / Pudrowy', 'Kremowy / Écru'],
+    secondaryColorHexes: ['#e39ab2', '#f3ead8'],
+    pattern: 'floral',
+    brightnessType: 'dark',
+    tempRange: 'mild',
+    occasions: ['casual', 'party', 'formal'],
+    silhouette: 'dress',
+  },
+  {
+    category: 'outerwear',
+    subCategory: 'marynarka w kratę',
+    dominantColor: 'Beż',
+    colorHex: '#d8c3a5',
+    secondaryColors: ['Brąz', 'Czerń'],
+    secondaryColorHexes: ['#6b442a', '#18181c'],
+    pattern: 'plaid',
+    brightnessType: 'light',
+    tempRange: 'cool',
+    occasions: ['work', 'formal', 'casual'],
+    silhouette: 'blazer',
+  },
+  {
+    category: 'shoes',
+    subCategory: 'sneakersy retro (wielokolorowe)',
+    dominantColor: 'Biel',
+    colorHex: '#f5f5f3',
+    secondaryColors: ['Granat', 'Czerwień'],
+    secondaryColorHexes: ['#1d2d50', '#c9332b'],
+    pattern: 'solid',
+    brightnessType: 'light',
+    tempRange: 'mild',
+    occasions: ['casual', 'sport', 'party'],
+    silhouette: 'sneakers',
+  },
+  {
+    category: 'accessory',
+    subCategory: 'apaszka jedwabna we wzory',
+    dominantColor: 'Kremowy / Écru',
+    colorHex: '#f3ead8',
+    secondaryColors: ['Karmel / Camel', 'Granat'],
+    secondaryColorHexes: ['#c1874b', '#1d2d50'],
+    pattern: 'floral',
+    brightnessType: 'light',
+    tempRange: 'mild',
+    occasions: ['casual', 'work', 'formal'],
     silhouette: 'scarf',
   },
 ];
@@ -400,12 +542,127 @@ function renderGarmentIllustration(spec: DemoSpec): string {
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
+  const drawPatternOverlay = () => {
+    const pat = spec.pattern ?? 'solid';
+    const sec = spec.secondaryColorHexes ?? [];
+    const c1 = sec[0] ?? (spec.brightnessType === 'dark' ? '#f3f4f6' : '#1d2d50');
+    const c2 = sec[1] ?? c1;
+
+    if (pat === 'stripes') {
+      ctx.fillStyle = c1;
+      const vertical = spec.silhouette === 'shirt' || spec.silhouette === 'trousers';
+      if (vertical) {
+        for (let x = 60; x < 300; x += 16) {
+          ctx.fillRect(x, 50, 5, 260);
+        }
+      } else {
+        for (let y = 90; y < 295; y += 18) {
+          ctx.fillRect(55, y, 250, 7);
+        }
+      }
+    } else if (pat === 'plaid') {
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = c1;
+      for (let x = 70; x < 295; x += 28) {
+        ctx.fillRect(x, 50, 8, 260);
+      }
+      for (let y = 75; y < 295; y += 28) {
+        ctx.fillRect(55, y, 250, 8);
+      }
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = c2;
+      for (let x = 84; x < 295; x += 28) {
+        ctx.fillRect(x, 50, 2.5, 260);
+      }
+      for (let y = 89; y < 295; y += 28) {
+        ctx.fillRect(55, y, 250, 2.5);
+      }
+      ctx.restore();
+    } else if (pat === 'print') {
+      // Grafika / nadruk na klatce piersiowej
+      ctx.save();
+      ctx.fillStyle = c1;
+      ctx.beginPath();
+      ctx.arc(180, 152, 32, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = c2;
+      ctx.beginPath();
+      ctx.moveTo(180, 128);
+      ctx.lineTo(202, 166);
+      ctx.lineTo(158, 166);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillRect(148, 192, 64, 7);
+      ctx.fillStyle = c1;
+      ctx.fillRect(158, 204, 44, 5);
+      ctx.restore();
+    } else if (pat === 'floral') {
+      ctx.save();
+      const spots: [number, number][] = [
+        [145, 115],
+        [205, 120],
+        [175, 155],
+        [135, 185],
+        [215, 180],
+        [160, 220],
+        [200, 230],
+        [140, 260],
+        [220, 265],
+        [180, 275],
+      ];
+      for (let i = 0; i < spots.length; i++) {
+        const [fx, fy] = spots[i];
+        ctx.fillStyle = i % 2 === 0 ? c1 : c2;
+        for (let a = 0; a < 5; a++) {
+          const ang = (a * Math.PI * 2) / 5;
+          ctx.beginPath();
+          ctx.arc(fx + Math.cos(ang) * 6, fy + Math.sin(ang) * 6, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = '#f5d061';
+        ctx.beginPath();
+        ctx.arc(fx, fy, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    } else if (pat === 'dots') {
+      ctx.save();
+      ctx.fillStyle = c1;
+      for (let y = 85; y < 290; y += 22) {
+        const offset = ((y - 85) / 22) % 2 === 0 ? 0 : 11;
+        for (let x = 80 + offset; x < 280; x += 22) {
+          ctx.beginPath();
+          ctx.arc(x, y, 4.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    } else if (sec.length > 0) {
+      // Wielokolorowe ubranie gładkie (np. kolorowe paski na sneakersach lub lamówki)
+      ctx.save();
+      ctx.fillStyle = c1;
+      ctx.fillRect(60, 175, 240, 14);
+      if (sec[1]) {
+        ctx.fillStyle = c2;
+        ctx.fillRect(60, 193, 240, 10);
+      }
+      ctx.restore();
+    }
+  };
+
   const drawPath = (pts: [number, number][], close = true) => {
     ctx.beginPath();
     ctx.moveTo(pts[0][0], pts[0][1]);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
     if (close) ctx.closePath();
     ctx.fill();
+    if ((spec.pattern && spec.pattern !== 'solid') || (spec.secondaryColorHexes?.length ?? 0) > 0) {
+      ctx.save();
+      ctx.clip();
+      drawPatternOverlay();
+      ctx.restore();
+    }
     ctx.stroke();
   };
 
@@ -692,7 +949,10 @@ function inferSilhouette(category: Category, subCategory: string): SilhouetteKin
 }
 
 export function renderFallbackIllustrationForItem(
-  item: Pick<ClothingItem, 'category' | 'subCategory' | 'colorHex'>
+  item: Pick<
+    ClothingItem,
+    'category' | 'subCategory' | 'colorHex' | 'secondaryColors' | 'secondaryColorHexes' | 'pattern'
+  >
 ): string {
   const matchedDemo = DEMO_ITEMS.find(
     (d) =>
@@ -705,6 +965,9 @@ export function renderFallbackIllustrationForItem(
     subCategory: item.subCategory,
     dominantColor: '',
     colorHex: item.colorHex || '#7bb2e0',
+    secondaryColors: item.secondaryColors ?? matchedDemo?.secondaryColors,
+    secondaryColorHexes: item.secondaryColorHexes ?? matchedDemo?.secondaryColorHexes,
+    pattern: item.pattern ?? matchedDemo?.pattern ?? 'solid',
     brightnessType: 'neutral',
     tempRange: 'mild',
     occasions: ['casual'],
@@ -712,14 +975,23 @@ export function renderFallbackIllustrationForItem(
   });
 }
 
-/** Generuje i zapisuje 27 różnorodnych ubrań testowych w bazie IndexedDB (z licznikiem założeń = 0). */
+/** Generuje i zapisuje 37 różnorodnych ubrań testowych w bazie IndexedDB (z licznikiem założeń = 0). */
 export async function seedDemoWardrobe(): Promise<number> {
+  const existing = await db.items.toArray();
+  const existingKeys = new Set(
+    existing.map((i) => `${i.category}|${i.subCategory}|${i.dominantColor}|${i.pattern ?? 'solid'}`)
+  );
+  const missingSpecs = DEMO_ITEMS.filter(
+    (s) => !existingKeys.has(`${s.category}|${s.subCategory}|${s.dominantColor}|${s.pattern ?? 'solid'}`)
+  );
+  const specsToSeed = missingSpecs.length > 0 ? missingSpecs : DEMO_ITEMS;
+
   const now = Date.now();
   const created: ClothingItem[] = [];
 
-  for (let i = 0; i < DEMO_ITEMS.length; i++) {
-    const spec = DEMO_ITEMS[i];
-    const imageDataUrl = await renderGarmentIllustration(spec);
+  for (let i = 0; i < specsToSeed.length; i++) {
+    const spec = specsToSeed[i];
+    const imageDataUrl = renderGarmentIllustration(spec);
     created.push({
       id: newId(),
       imageDataUrl,
@@ -729,9 +1001,12 @@ export async function seedDemoWardrobe(): Promise<number> {
       isRainproof: Boolean(spec.isRainproof),
       dominantColor: spec.dominantColor,
       colorHex: spec.colorHex,
+      secondaryColors: spec.secondaryColors ? [...spec.secondaryColors] : [],
+      secondaryColorHexes: spec.secondaryColorHexes ? [...spec.secondaryColorHexes] : [],
+      pattern: spec.pattern ?? 'solid',
       brightnessType: spec.brightnessType,
       occasions: [...spec.occasions],
-      createdAt: now - (DEMO_ITEMS.length - i) * 60000,
+      createdAt: now - (specsToSeed.length - i) * 60000,
       wearCount: 0,
       inLaundry: false,
       isFavorite: false,
@@ -743,8 +1018,9 @@ export async function seedDemoWardrobe(): Promise<number> {
 }
 
 /**
- * Naprawia istniejące rekordy w IndexedDB (migracja z Blob do DataURL dla iOS Safari
- * oraz wyzerowanie sztucznych liczników założeń z wcześniejszej wersji szafy testowej).
+ * Naprawia istniejące rekordy w IndexedDB (migracja z Blob do DataURL dla iOS Safari,
+ * wyzerowanie sztucznych liczników założeń z wcześniejszej wersji szafy testowej
+ * oraz automatyczne dogranie 10 wielokolorowych/wzorzystych ubrań do istniejącej szafy testowej).
  */
 export async function repairWardrobeDatabase(): Promise<void> {
   try {
@@ -795,6 +1071,9 @@ export async function repairWardrobeDatabase(): Promise<void> {
           isRainproof: Boolean(item.isRainproof),
           dominantColor: item.dominantColor,
           colorHex: item.colorHex,
+          secondaryColors: item.secondaryColors ?? [],
+          secondaryColorHexes: item.secondaryColorHexes ?? [],
+          pattern: item.pattern ?? 'solid',
           brightnessType: item.brightnessType,
           occasions: Array.isArray(item.occasions) && item.occasions.length > 0 ? item.occasions : ['casual'],
           createdAt: item.createdAt ?? Date.now(),
@@ -809,6 +1088,38 @@ export async function repairWardrobeDatabase(): Promise<void> {
 
     if (toPut.length > 0) {
       await db.items.bulkPut(toPut);
+    }
+
+    // Jeśli użytkownik ma załadowaną wcześniejszą wersję szafy testowej (bez wzorów/wielokolorowości),
+    // automatycznie uzupełniamy ją o 10 nowych wielokolorowych i wzorzystych ubrań testowych.
+    const hasPatternedOrMulti = allItems.some(
+      (i) => (i.pattern && i.pattern !== 'solid') || (i.secondaryColors?.length ?? 0) > 0
+    );
+    if (allItems.length >= 20 && !hasPatternedOrMulti) {
+      const newPatternSpecs = DEMO_ITEMS.filter(
+        (s) => (s.pattern && s.pattern !== 'solid') || (s.secondaryColors?.length ?? 0) > 0
+      );
+      const now = Date.now();
+      const extraItems: ClothingItem[] = newPatternSpecs.map((spec, idx) => ({
+        id: newId(),
+        imageDataUrl: renderGarmentIllustration(spec),
+        category: spec.category,
+        subCategory: spec.subCategory,
+        tempRange: spec.tempRange,
+        isRainproof: Boolean(spec.isRainproof),
+        dominantColor: spec.dominantColor,
+        colorHex: spec.colorHex,
+        secondaryColors: spec.secondaryColors ? [...spec.secondaryColors] : [],
+        secondaryColorHexes: spec.secondaryColorHexes ? [...spec.secondaryColorHexes] : [],
+        pattern: spec.pattern ?? 'solid',
+        brightnessType: spec.brightnessType,
+        occasions: [...spec.occasions],
+        createdAt: now - (newPatternSpecs.length - idx) * 30000,
+        wearCount: 0,
+        inLaundry: false,
+        isFavorite: false,
+      }));
+      await db.items.bulkAdd(extraItems);
     }
   } catch {
     // Ignoruj ewentualne błędy migracji
