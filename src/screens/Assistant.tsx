@@ -1,8 +1,10 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   AlertCircle,
   Award,
+  Bell,
+  Brain,
   Briefcase,
   Calendar,
   Camera,
@@ -18,6 +20,7 @@ import {
   Loader2,
   RefreshCw,
   ShoppingBag,
+  Smartphone,
   Sparkles,
   Square,
   Target,
@@ -64,7 +67,19 @@ import {
   generateSmartWishlist,
   generateWeeklyPlan,
   groupLaundryIntoLoads,
+  recommendOutfit,
 } from '../lib/outfit';
+import {
+  loadNotificationSettings,
+  requestMorningNotificationPermission,
+  saveNotificationSettings,
+  sendOutfitNotificationNow,
+} from '../lib/notifications';
+import {
+  TASTE_CHANGE_EVENT,
+  getTasteSummary,
+  resetTasteMemory,
+} from '../lib/tasteMemory';
 import { garmentHarmony } from '../lib/palette';
 import { DEFAULT_PLACE, weatherLabel } from '../lib/weather';
 import { Chip, ColorDot, ColorDots, ItemImage, WeatherIcon } from '../components/ui';
@@ -134,7 +149,14 @@ export default function Assistant({
       {subTab === 'capsule' && <CapsuleAndWishlistView items={items} />}
       {subTab === 'packing' && <PackingView items={items} />}
       {subTab === 'outfits' && <SavedOutfitsView items={items} outfits={outfits} notify={notify} />}
-      {subTab === 'stats' && <StatsAndBackupView items={items} notify={notify} />}
+      {subTab === 'stats' && (
+        <StatsAndBackupView
+          items={items}
+          weather={activeWeather}
+          placeName={placeName}
+          notify={notify}
+        />
+      )}
     </div>
   );
 }
@@ -1003,15 +1025,60 @@ function SavedOutfitsView({
 
 function StatsAndBackupView({
   items,
+  weather,
+  placeName,
   notify,
 }: {
   items: ClothingItem[];
+  weather: WeatherData;
+  placeName: string;
   notify: (msg: string) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [seeding, setSeeding] = useState<DemoWardrobeGender | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [tasteSummary, setTasteSummary] = useState(getTasteSummary);
+  const [notifSettings, setNotifSettings] = useState(loadNotificationSettings);
+
+  useEffect(() => {
+    const syncTaste = () => setTasteSummary(getTasteSummary());
+    window.addEventListener(TASTE_CHANGE_EVENT, syncTaste);
+    return () => window.removeEventListener(TASTE_CHANGE_EVENT, syncTaste);
+  }, []);
+
+  const handleToggleNotifications = async (enabled: boolean) => {
+    if (enabled) {
+      const granted = await requestMorningNotificationPermission();
+      if (!granted) {
+        notify('Zezwól na powiadomienia w ustawieniach przeglądarki 🔔');
+        return;
+      }
+    }
+    const next = { ...notifSettings, enabled };
+    setNotifSettings(next);
+    saveNotificationSettings(next);
+    notify(
+      enabled
+        ? `Włączono poranne powiadomienia o stroju (${next.morningHour}:00) 🔔`
+        : 'Wyłączono poranne powiadomienia'
+    );
+  };
+
+  const handleTestNotification = async () => {
+    const granted = await requestMorningNotificationPermission();
+    if (!granted) {
+      notify('Brak zgody na powiadomienia w przeglądarce');
+      return;
+    }
+    const rec = recommendOutfit(items, weather, { preference: 'any', occasion: 'casual' });
+    const sent = sendOutfitNotificationNow(rec.ok ? rec.outfit : null, weather, placeName);
+    notify(
+      sent
+        ? 'Wysłano testowe powiadomienie z dzisiejszym strojem 🔔'
+        : 'Twoja przeglądarka zablokowała powiadomienie'
+    );
+  };
 
   const handleSeedDemo = async (gender: DemoWardrobeGender) => {
     if (seeding || busy) return;
@@ -1148,6 +1215,149 @@ function StatsAndBackupView({
 
   return (
     <div className="space-y-4">
+      {/* 1. Pamięć gustu użytkownika (Uczenie się z akceptacji i odrzuceń) */}
+      <section className="rounded-3xl bg-ink-900 p-4 ring-1 ring-accent-400/25">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-bold">
+              <Brain size={18} className="text-accent-400" /> Wyuczony gust użytkownika (AI Taste)
+            </h2>
+            <p className="text-xs text-ink-400">
+              Algorytm uczy się na bieżąco z zaakceptowanych stylizacji oraz kliknięć „Nie mój styl”
+            </p>
+          </div>
+          {tasteSummary.totalSignals > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                resetTasteMemory();
+                setTasteSummary(getTasteSummary());
+                notify('Zresetowano pamięć gustu');
+              }}
+              className="shrink-0 rounded-xl bg-ink-800 px-2.5 py-1.5 text-[11px] font-semibold text-ink-300 active:bg-ink-700"
+            >
+              Resetuj
+            </button>
+          )}
+        </div>
+
+        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-2xl bg-ink-800 p-2.5">
+            <div className="text-sm font-bold text-white">{tasteSummary.totalSignals}</div>
+            <div className="text-[10px] text-ink-400">Sygnałów gustu</div>
+          </div>
+          <div className="rounded-2xl bg-ink-800 p-2.5">
+            <div className="text-sm font-bold text-emerald-300">{tasteSummary.acceptedCount}</div>
+            <div className="text-[10px] text-ink-400">Polubione zestawy</div>
+          </div>
+          <div className="rounded-2xl bg-ink-800 p-2.5">
+            <div className="text-sm font-bold text-rose-300">{tasteSummary.skippedCount}</div>
+            <div className="text-[10px] text-ink-400">Pominięte / Odrzucone</div>
+          </div>
+        </div>
+
+        {tasteSummary.favoriteColorPairs.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-1 text-[11px] font-semibold text-emerald-300">
+              ❤️ Twoje ulubione połączenia barw (promowane przy losowaniu):
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {tasteSummary.favoriteColorPairs.map((p) => (
+                <span
+                  key={p.pair}
+                  className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-medium text-emerald-200"
+                >
+                  {p.pair}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tasteSummary.avoidedColorPairs.length > 0 && (
+          <div className="mt-2.5">
+            <div className="mb-1 text-[11px] font-semibold text-rose-300">
+              👎 Unikane połączenia barw:
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {tasteSummary.avoidedColorPairs.map((p) => (
+                <span
+                  key={p.pair}
+                  className="rounded-full bg-rose-500/15 px-2.5 py-1 text-[11px] font-medium text-rose-200"
+                >
+                  {p.pair}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* 2. Poranne Powiadomienia Pogodowo-Stylizacyjne i Instalacja PWA */}
+      <section className="space-y-3 rounded-3xl bg-ink-900 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-bold">
+              <Bell size={18} className="text-amber-400" /> Poranne powiadomienia i aplikacja
+            </h2>
+            <p className="text-xs text-ink-400">
+              Otrzymuj rano gotową propozycję stroju dopasowaną do pogody w Twoim mieście
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            checked={notifSettings.enabled}
+            onChange={(e) => handleToggleNotifications(e.target.checked)}
+            className="h-5 w-5 shrink-0 accent-violet-500"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-ink-800 px-3.5 py-2.5">
+          <span className="text-xs font-medium text-ink-200">Godzina porannego alertu:</span>
+          <div className="flex gap-1.5">
+            {[6, 7, 8, 9].map((h) => (
+              <button
+                key={h}
+                type="button"
+                onClick={() => {
+                  const next = { ...notifSettings, morningHour: h };
+                  setNotifSettings(next);
+                  saveNotificationSettings(next);
+                }}
+                className={`rounded-xl px-2.5 py-1 text-xs font-semibold ${
+                  notifSettings.morningHour === h
+                    ? 'bg-accent-500 text-white'
+                    : 'bg-ink-900 text-ink-300'
+                }`}
+              >
+                {h}:00
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleTestNotification}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-ink-800 py-2.5 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/30 active:bg-ink-700"
+        >
+          <Bell size={14} /> Wyślij testowe powiadomienie ze strojem teraz
+        </button>
+
+        <div className="rounded-2xl bg-ink-800/70 p-3 text-xs text-ink-300">
+          <div className="flex items-center gap-1.5 font-semibold text-white">
+            <Smartphone size={14} className="text-accent-400" /> Instalacja na ekranie głównym (iOS
+            / Android):
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-ink-400">
+            • <strong>iPhone (Safari)</strong>: dotknij ikony <em>Udostępnij</em> na dole ekranu i
+            wybierz <strong>„Dodaj do ekranu początkowego”</strong>.<br />•{' '}
+            <strong>Android (Chrome)</strong>: dotknij menu ⋮ w prawym górnym rogu i wybierz{' '}
+            <strong>„Zainstaluj aplikację”</strong>.
+          </p>
+        </div>
+      </section>
+
       {/* Wartość szafy i Cost Per Wear (CPW) */}
       {items.length > 0 && cpwStats.totalValue > 0 && (
         <section className="rounded-3xl bg-ink-900 p-4">

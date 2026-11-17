@@ -25,6 +25,7 @@ import {
   loadPersonalProfile,
   type PersonalColorEvaluation,
 } from './personalColor';
+import { getTastePairMultiplier, loadTasteMemory } from './tasteMemory';
 import { get7DayForecast, isSunny, isWet, tempRangeFor } from './weather';
 
 export interface RecommendOptions {
@@ -352,6 +353,7 @@ export function computeOutfitScore(
 
   const activeProfile = profile ?? loadPersonalProfile();
   let proportionBonus = 0;
+  let tasteBonus = 0;
   if (outfit.top && outfit.bottom) {
     proportionBonus = evaluateBodyProportion(
       outfit.top,
@@ -359,12 +361,14 @@ export function computeOutfitScore(
       'casual',
       activeProfile
     ).scoreDelta;
+    tasteBonus = getTastePairMultiplier(outfit.top, outfit.bottom).scoreDelta;
   }
 
   const baseScore =
     (harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100 -
     patternPenalty +
-    proportionBonus;
+    proportionBonus +
+    tasteBonus;
 
   if (!activeProfile.enabled) return Math.max(25, Math.min(100, Math.round(baseScore)));
 
@@ -506,6 +510,7 @@ function buildOutfit(
   const lockedOnepiece = locked?.onepiece;
 
   const bases: BaseCandidate[] = [];
+  const tasteMemory = loadTasteMemory();
 
   if (!lockedOnepiece && allTops.length > 0 && allBottoms.length > 0) {
     const topPool = lockedTop
@@ -520,6 +525,7 @@ function buildOutfit(
         const gh = garmentHarmony(top, bottom);
         const h = gh.score;
         const prop = evaluateBodyProportion(top, bottom, occasion, personalProfile);
+        const taste = getTastePairMultiplier(top, bottom, tasteMemory);
         const occMatch =
           (occasionsOf(top).includes(occasion) ? 1 : 0.45) *
           (occasionsOf(bottom).includes(occasion) ? 1 : 0.45);
@@ -532,6 +538,7 @@ function buildOutfit(
           occMatch *
           formalPatternFactor *
           prop.factor *
+          taste.multiplier *
           personalFactor(top, personalProfile) *
           personalFactor(bottom, personalProfile) *
           wornFactor(top, now) *
@@ -607,6 +614,12 @@ function buildOutfit(
     const prop = evaluateBodyProportion(top, bottom, occasion, personalProfile);
     if (prop.note) {
       notes.push(prop.note);
+    }
+    const taste = getTastePairMultiplier(top, bottom, tasteMemory);
+    if (taste.isLikedPair) {
+      notes.push(
+        `🧠 Dopasowano do Twojego gustu: algorytm zapamiętał, że lubisz połączenie ${top.dominantColor} + ${bottom.dominantColor}.`
+      );
     }
   }
 

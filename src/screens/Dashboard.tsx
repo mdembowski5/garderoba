@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Check, Loader2, Palette, Plus, Shirt, Shuffle, Sparkles } from 'lucide-react';
+import { Check, Loader2, Palette, Plus, Shirt, Shuffle, Sparkles, ThumbsDown } from 'lucide-react';
 import type {
   Category,
   ClothingItem,
@@ -11,7 +11,9 @@ import type {
 } from '../types';
 import { acceptOutfit, db, saveFavoriteOutfit } from '../lib/db';
 import { exportOutfitCollage } from '../lib/collage';
+import { checkAndTriggerMorningNotification } from '../lib/notifications';
 import { recommendOutfit, swapOutfitPiece } from '../lib/outfit';
+import { recordPositiveOutfitTaste, recordSkippedOutfitTaste } from '../lib/tasteMemory';
 import {
   DEMO_MEN_COUNT,
   DEMO_WOMEN_COUNT,
@@ -169,12 +171,14 @@ export default function Dashboard({
   const handleSaveFavorite = async () => {
     if (!result?.ok || !weather || savedFav) return;
     await saveFavoriteOutfit(result.outfit, weather.apparentTemperature, occasion);
+    recordPositiveOutfitTaste(result.outfit, true);
     setSavedFav(true);
-    notify('Zapisano w ulubionych stylizacjach ❤️');
+    notify('Zapisano w ulubionych i zapamiętano Twój gust ❤️');
   };
 
   const accept = async () => {
     if (!result?.ok || !weather || accepted) return;
+    recordPositiveOutfitTaste(result.outfit, false);
     const { movedToLaundry } = await acceptOutfit(
       result.outfit,
       weather.apparentTemperature,
@@ -189,6 +193,22 @@ export default function Dashboard({
       notify('Strój zaakceptowany – miłego dnia! ✨');
     }
   };
+
+  const handleReshuffle = (strongDislike = false) => {
+    if (result?.ok && !accepted && !savedFav) {
+      recordSkippedOutfitTaste(result.outfit, strongDislike);
+    }
+    generate(false);
+    if (strongDislike) {
+      notify('Zapamiętano – będę unikać tego połączenia 🧠');
+    }
+  };
+
+  useEffect(() => {
+    if (result?.ok && weather) {
+      checkAndTriggerMorningNotification(result.outfit, weather, weatherState.place?.name);
+    }
+  }, [result, weather, weatherState.place?.name]);
 
   const handleExportCollage = async () => {
     if (!result?.ok) return;
@@ -365,24 +385,35 @@ export default function Dashboard({
               onSaveFavorite={handleSaveFavorite}
               onExportCollage={handleExportCollage}
             />
-            <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+            <div className="grid grid-cols-12 gap-2">
               <button
-                onClick={() => generate(false)}
-                className="flex min-w-0 items-center justify-center gap-1.5 rounded-2xl bg-ink-800 px-3 py-3.5 text-xs font-semibold active:bg-ink-700 sm:gap-2 sm:text-sm"
+                type="button"
+                onClick={() => handleReshuffle(true)}
+                title="Nie podoba mi się to połączenie – ucz algorytm mojego gustu"
+                className="col-span-3 flex min-w-0 items-center justify-center gap-1 rounded-2xl bg-ink-800 px-2 py-3.5 text-xs font-semibold text-ink-300 active:bg-rose-500/20 active:text-rose-300"
               >
-                <Shuffle size={17} className="shrink-0" />
-                <span className="truncate">Losuj inny zestaw</span>
+                <ThumbsDown size={15} className="shrink-0" />
+                <span className="truncate">Nie mój styl</span>
               </button>
               <button
+                type="button"
+                onClick={() => handleReshuffle(false)}
+                className="col-span-4 flex min-w-0 items-center justify-center gap-1.5 rounded-2xl bg-ink-800 px-2.5 py-3.5 text-xs font-semibold active:bg-ink-700 sm:text-sm"
+              >
+                <Shuffle size={16} className="shrink-0" />
+                <span className="truncate">Losuj inny</span>
+              </button>
+              <button
+                type="button"
                 onClick={accept}
                 disabled={accepted}
-                className={`flex min-w-0 items-center justify-center gap-1.5 rounded-2xl px-3 py-3.5 text-xs font-semibold transition-colors sm:gap-2 sm:text-sm ${
+                className={`col-span-5 flex min-w-0 items-center justify-center gap-1.5 rounded-2xl px-3 py-3.5 text-xs font-semibold transition-colors sm:text-sm ${
                   accepted
                     ? 'bg-emerald-600/40 text-emerald-200'
                     : 'bg-accent-500 active:bg-accent-600'
                 }`}
               >
-                <Check size={17} className="shrink-0" />
+                <Check size={16} className="shrink-0" />
                 <span className="truncate">
                   {accepted ? 'Zaakceptowano' : 'Zaakceptuj strój'}
                 </span>

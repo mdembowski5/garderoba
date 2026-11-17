@@ -589,7 +589,46 @@ export function segmentGarment(
     }
   }
 
-  // 5. Czyszczenie topologiczne: zostawiamy główny obiekt ubrania i wypełniamy dziury wewnątrz niego
+  // 5. Eliminacja niepołączonych plam tła (np. meble/dywan odcięte cieniem) oraz skóry modela (głowa/szyja/ręce na obrzeżach)
+  const centerIsSkinLike =
+    coreLab[0] > 42 &&
+    coreLab[0] < 86 &&
+    coreLab[1] > 7 &&
+    coreLab[1] < 24 &&
+    coreLab[2] > 11 &&
+    coreLab[2] < 32;
+
+  for (let y = 0; y < height; y++) {
+    const ny = (y + 0.5) / height;
+    for (let x = 0; x < width; x++) {
+      const nx = (x + 0.5) / width;
+      const i = y * width + x;
+      if (bgVisited[i]) continue;
+
+      const isOuterZone =
+        ny < 0.18 || ny > 0.9 || nx < 0.14 || nx > 0.86;
+
+      // Niepołączone z brzegiem fragmenty tła (np. za wieszakiem lub między rękawami)
+      if (isOuterZone && minBgDist[i] < 15.5 && minFgDist[i] > minBgDist[i] * 1.3) {
+        bgVisited[i] = 1;
+        continue;
+      }
+
+      // Wykluczanie odcieni skóry na górze (twarz/szyja) i po bokach (dłonie/ramiona), gdy ubranie nie jest beżowe/cieliste
+      if (!centerIsSkinLike && (ny < 0.22 || nx < 0.16 || nx > 0.84)) {
+        const l = L[i];
+        const a = A[i];
+        const b = B[i];
+        const pixelIsSkin =
+          l > 42 && l < 86 && a > 7.5 && a < 24 && b > 11.5 && b < 32 && b > a * 0.9;
+        if (pixelIsSkin && minFgDist[i] > 15) {
+          bgVisited[i] = 1;
+        }
+      }
+    }
+  }
+
+  // 6. Czyszczenie topologiczne: zostawiamy główny obiekt ubrania i wypełniamy dziury wewnątrz niego
   const rawFg = new Uint8Array(total);
   for (let i = 0; i < total; i++) rawFg[i] = bgVisited[i] ? 0 : 1;
   const solidFg = cleanupForegroundTopology(rawFg, width, height, minBgDist, minFgDist);

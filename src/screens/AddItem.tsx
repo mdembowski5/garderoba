@@ -4,10 +4,12 @@ import {
   Check,
   Droplets,
   ImagePlus,
+  Layers,
   Loader2,
   Pipette,
   RotateCcw,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import type {
   BrightnessType,
@@ -50,6 +52,25 @@ interface Draft {
   analysis: ColorAnalysis;
 }
 
+interface BatchDraftItem {
+  id: string;
+  original: CompressedImage;
+  cutout: CompressedImage;
+  useCutout: boolean;
+  category: Category;
+  subCategory: string;
+  tempRange: TempRange;
+  isRainproof: boolean;
+  dominantColor: string;
+  colorHex: string;
+  secondaryColors: string[];
+  secondaryColorHexes: string[];
+  pattern: PatternType;
+  fit: FitType;
+  brightnessType: BrightnessType;
+  occasions: Occasion[];
+}
+
 const TEMP_IDS = TEMP_RANGES.map((t) => t.id);
 const BRIGHTNESS_OPTIONS = (['light', 'neutral', 'dark'] as BrightnessType[]).map((v) => ({
   value: v,
@@ -65,8 +86,11 @@ export default function AddItem({
 }) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+  const batchRef = useRef<HTMLInputElement>(null);
 
   const [busy, setBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [batchItems, setBatchItems] = useState<BatchDraftItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [useCutout, setUseCutout] = useState(true);
@@ -127,19 +151,84 @@ export default function AddItem({
 
   const reset = () => {
     setDraft(null);
+    setBatchItems([]);
+    setBatchProgress(null);
     setError(null);
     setColorEdited(false);
     setFocusPoint(null);
     setSecondaryColors([]);
     setSecondaryColorHexes([]);
     setPattern('solid');
+    setPrice('');
+    setBrand('');
     chooseCategory('top');
   };
 
+  const processBatchFiles = async (files: File[]) => {
+    setBusy(true);
+    setError(null);
+    setDraft(null);
+    setBatchProgress({ done: 0, total: files.length });
+    const created: BatchDraftItem[] = [];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setBatchProgress({ done: i + 1, total: files.length });
+        try {
+          const original = await compressImage(file);
+          const [analysis, cutout] = await Promise.all([
+            analyzeImage(original.blob),
+            removeBackgroundImage(original.blob),
+          ]);
+          const cat = analysis.suggestedCategory;
+          const list = SUBCATEGORIES[cat];
+          const sub = list.some((s) => s.label === analysis.suggestedSubCategory)
+            ? analysis.suggestedSubCategory
+            : list[0].label;
+          const preset = list.find((s) => s.label === sub) ?? list[0];
+
+          created.push({
+            id: `${Date.now()}-${i}`,
+            original,
+            cutout,
+            useCutout: true,
+            category: cat,
+            subCategory: sub,
+            tempRange: preset.temp,
+            isRainproof: Boolean(preset.rainproof),
+            dominantColor: analysis.paletteName,
+            colorHex: analysis.hex,
+            secondaryColors: analysis.secondaryColors,
+            secondaryColorHexes: analysis.secondaryColorHexes,
+            pattern: analysis.suggestedPattern,
+            fit: defaultFitForSubCategory(cat, sub),
+            brightnessType: analysis.brightness,
+            occasions: [...preset.occasions],
+          });
+        } catch {
+          // pomijamy uszkodzony plik
+        }
+      }
+      setBatchItems(created);
+      if (created.length === 0) {
+        setError('Nie udało się przetworzyć wybranych zdjęć.');
+      }
+    } finally {
+      setBusy(false);
+      setBatchProgress(null);
+    }
+  };
+
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const fileList = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = ''; // pozwala wybrać to samo zdjęcie ponownie
-    if (!file) return;
+    if (fileList.length === 0) return;
+    if (fileList.length > 1) {
+      await processBatchFiles(fileList.slice(0, 30));
+      return;
+    }
+    const file = fileList[0];
     setBusy(true);
     setError(null);
     setFocusPoint(null);
@@ -274,6 +363,59 @@ export default function AddItem({
     }
   };
 
+  const saveBatch = async () => {
+    if (batchItems.length === 0 || saving) return;
+    setSaving(true);
+    try {
+      for (const item of batchItems) {
+        const img = item.useCutout ? item.cutout : item.original;
+        await addItem({
+          imageBlob: img.blob,
+          imageDataUrl: img.dataUrl,
+          category: item.category,
+          subCategory: item.subCategory,
+          tempRange: item.tempRange,
+          isRainproof: item.isRainproof,
+          dominantColor: item.dominantColor,
+          colorHex: item.colorHex,
+          secondaryColors: item.secondaryColors,
+          secondaryColorHexes: item.secondaryColorHexes,
+          pattern: item.pattern,
+          fit: item.fit,
+          brightnessType: item.brightnessType,
+          occasions: item.occasions,
+        });
+      }
+      notify(`Dodano hurtowo ${batchItems.length} ubrań do szafy ✓`);
+      reset();
+      onSaved();
+    } catch {
+      setError('Nie udało się zapisać wszystkich ubrań.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateBatchItemCategory = (id: string, newCat: Category) => {
+    const sub = SUBCATEGORIES[newCat][0].label;
+    const preset = SUBCATEGORIES[newCat][0];
+    setBatchItems((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              category: newCat,
+              subCategory: sub,
+              tempRange: preset.temp,
+              isRainproof: Boolean(preset.rainproof),
+              occasions: [...preset.occasions],
+              fit: defaultFitForSubCategory(newCat, sub),
+            }
+          : item
+      )
+    );
+  };
+
   const temp = TEMP_RANGES[tempIdx];
   const activeImage = draft ? (useCutout ? draft.cutout : draft.original) : null;
   const activePreviewUrl = draft ? (useCutout ? draft.cutoutUrl : draft.originalUrl) : '';
@@ -287,20 +429,20 @@ export default function AddItem({
             Tło jest wycinane automatycznie, a kolor i sylwetka rozpoznawane ze zdjęcia
           </p>
         </div>
-        {draft && (
+        {(draft || batchItems.length > 0) && (
           <button
             type="button"
-            onClick={save}
+            onClick={batchItems.length > 0 ? saveBatch : save}
             disabled={saving}
             className=" flex shrink-0 items-center gap-1.5 rounded-2xl bg-accent-500 px-3.5 py-2.5 text-xs font-bold text-white shadow active:bg-accent-600 disabled:opacity-60 sm:text-sm"
           >
             {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-            Zapisz
+            {batchItems.length > 0 ? `Zapisz (${batchItems.length})` : 'Zapisz'}
           </button>
         )}
       </header>
 
-      {/* Ukryte inputy: aparat (tylny) i galeria */}
+      {/* Ukryte inputy: aparat (tylny), galeria pojedyncza i masowe wgrywanie (multiple) */}
       <input
         ref={cameraRef}
         type="file"
@@ -309,14 +451,29 @@ export default function AddItem({
         className="hidden"
         onChange={onFile}
       />
-      <input ref={galleryRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={onFile}
+      />
+      <input
+        ref={batchRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={onFile}
+      />
 
-      {!draft && (
+      {!draft && batchItems.length === 0 && (
         <div className="space-y-3">
           <button
             onClick={() => cameraRef.current?.click()}
             disabled={busy}
-            className="flex w-full flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-accent-500/50 bg-accent-500/10 py-14 active:bg-accent-500/20"
+            className="flex w-full flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-accent-500/50 bg-accent-500/10 py-12 active:bg-accent-500/20"
           >
             {busy ? (
               <Loader2 size={40} className="animate-spin text-accent-300" />
@@ -324,24 +481,129 @@ export default function AddItem({
               <Camera size={40} className="text-accent-300" />
             )}
             <span className="text-lg font-semibold">
-              {busy ? 'Wycinanie tła i analiza ubrania…' : 'Zrób zdjęcie'}
+              {batchProgress
+                ? `Masowe przetwarzanie: ${batchProgress.done} z ${batchProgress.total} zdjęć…`
+                : busy
+                ? 'Wycinanie tła i analiza ubrania…'
+                : 'Zrób zdjęcie aparatem'}
             </span>
             <span className="text-xs text-ink-400">
               Umieść ubranie na środku kadru – tło i cienie zostaną odcięte
             </span>
           </button>
-          <button
-            onClick={() => galleryRef.current?.click()}
-            disabled={busy}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-ink-800 py-3.5 font-semibold active:bg-ink-700"
-          >
-            <ImagePlus size={18} /> Wybierz z galerii
-          </button>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <button
+              onClick={() => galleryRef.current?.click()}
+              disabled={busy}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-ink-800 py-3.5 text-sm font-semibold active:bg-ink-700"
+            >
+              <ImagePlus size={18} /> Wybierz z galerii
+            </button>
+            <button
+              onClick={() => batchRef.current?.click()}
+              disabled={busy}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent-500/20 py-3.5 text-sm font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-accent-500/30"
+            >
+              <Layers size={18} /> Masowe wgrywanie (wiele zdjęć)
+            </button>
+          </div>
         </div>
       )}
 
       {error && (
         <div className="mt-3 rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-200">{error}</div>
+      )}
+
+      {/* Widok masowego wgrywania wielu ubrań naraz (Batch Upload Review) */}
+      {batchItems.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-2xl bg-ink-900 p-3.5 ring-1 ring-accent-400/30">
+            <div>
+              <div className="text-sm font-bold text-white">
+                Przetworzono {batchItems.length} ubrań ze zdjęć
+              </div>
+              <div className="text-xs text-ink-400">
+                Sprawdź rozpoznane kategorie i kliknij „Zapisz wszystkie”
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={reset}
+              className="rounded-xl bg-ink-800 px-3 py-1.5 text-xs font-semibold text-ink-300 active:bg-ink-700"
+            >
+              Anuluj
+            </button>
+          </div>
+
+          <div className="space-y-2.5">
+            {batchItems.map((item) => {
+              const previewUrl = item.useCutout ? item.cutout.dataUrl : item.original.dataUrl;
+              return (
+                <div key={item.id} className="rounded-2xl bg-ink-900 p-3">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={previewUrl}
+                      alt={item.subCategory}
+                      className="h-20 w-20 shrink-0 rounded-xl bg-ink-800 object-cover"
+                    />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 truncate text-sm font-bold text-white">
+                          <ColorDots
+                            primaryHex={item.colorHex}
+                            secondaryHexes={item.secondaryColorHexes}
+                            size={12}
+                          />
+                          <span className="truncate">
+                            {item.dominantColor} · {item.subCategory}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setBatchItems((prev) => prev.filter((x) => x.id !== item.id))
+                          }
+                          className="rounded-lg p-1 text-ink-400 active:text-red-300"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                      <div className="text-xs text-ink-400">
+                        Wzór: {PATTERN_EMOJIS[item.pattern]} {PATTERN_LABELS[item.pattern]}
+                      </div>
+                      <div className="no-scrollbar flex gap-1 overflow-x-auto pt-1">
+                        {CATEGORY_ORDER.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => updateBatchItemCategory(item.id, c)}
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              item.category === c
+                                ? 'bg-accent-500 text-white'
+                                : 'bg-ink-800 text-ink-300'
+                            }`}
+                          >
+                            {CATEGORY_EMOJIS[c]} {CATEGORY_LABELS[c]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={saveBatch}
+            disabled={saving}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent-500 py-4 text-base font-bold text-white active:bg-accent-600 disabled:opacity-60"
+          >
+            {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+            Zapisz wszystkie ({batchItems.length}) w szafie
+          </button>
+        </div>
       )}
 
       {draft && activeImage && (
