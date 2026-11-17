@@ -9,7 +9,13 @@ import type {
   PatternType,
 } from '../types';
 import { clearLaundry, db, deleteItem, updateItem } from '../lib/db';
-import { seedDemoWardrobe } from '../lib/demoWardrobe';
+import {
+  DEMO_MEN_COUNT,
+  DEMO_WOMEN_COUNT,
+  getSavedDemoGender,
+  seedDemoWardrobe,
+  type DemoWardrobeGender,
+} from '../lib/demoWardrobe';
 import {
   BRIGHTNESS_LABELS,
   CATEGORY_EMOJIS,
@@ -43,18 +49,21 @@ export default function Wardrobe({
   const [occ, setOcc] = useState<OccFilter>('all');
   const [selected, setSelected] = useState<ClothingItem | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [seeding, setSeeding] = useState(false);
+  const [seeding, setSeeding] = useState<DemoWardrobeGender | null>(null);
+  const [demoGender, setDemoGender] = useState<DemoWardrobeGender>(getSavedDemoGender);
 
-  const handleSeedDemo = async () => {
+  const handleSeedDemo = async (gender: DemoWardrobeGender) => {
     if (seeding) return;
-    setSeeding(true);
+    setSeeding(gender);
     try {
-      const count = await seedDemoWardrobe();
-      notify(`Załadowano testową szafę (${count} ubrań) ✨`);
+      const count = await seedDemoWardrobe(gender);
+      setDemoGender(gender);
+      const label = gender === 'women' ? 'damską' : 'męską';
+      notify(`Załadowano ${label} szafę testową (${count} ubrań ze zdjęciami) ✨`);
     } catch {
-      notify('Nie udało się wygenerować szafy testowej');
+      notify('Nie udało się załadować szafy testowej');
     } finally {
-      setSeeding(false);
+      setSeeding(null);
     }
   };
 
@@ -217,7 +226,7 @@ export default function Wardrobe({
 
   return (
     <div className="scroll-area h-full pb-12 pt-safe">
-      <header className="mb-3 flex items-end justify-between px-4">
+      <header className="mb-3 flex items-end justify-between gap-2 px-4">
         <div>
           <h1 className="text-2xl font-bold">Moja szafa</h1>
           <p className="text-sm text-ink-400">
@@ -225,14 +234,40 @@ export default function Wardrobe({
             {totalKB >= 1024 ? `${(totalKB / 1024).toFixed(1)} MB` : `${totalKB} KB`}
           </p>
         </div>
-        {counts.laundry > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
           <button
-            onClick={handleWashAll}
-            className="flex items-center gap-1.5 rounded-full bg-sky-500/20 px-3 py-1.5 text-xs font-semibold text-sky-300 active:bg-sky-500/30"
+            type="button"
+            onClick={() => handleSeedDemo('women')}
+            disabled={Boolean(seeding)}
+            className={`rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+              demoGender === 'women'
+                ? 'bg-accent-500/25 text-accent-300 ring-1 ring-accent-400/50'
+                : 'bg-ink-800 text-ink-300 active:bg-ink-700'
+            }`}
           >
-            <Sparkles size={13} /> Wypierz ({counts.laundry})
+            {seeding === 'women' ? '...' : `👩 Damska (${DEMO_WOMEN_COUNT})`}
           </button>
-        )}
+          <button
+            type="button"
+            onClick={() => handleSeedDemo('men')}
+            disabled={Boolean(seeding)}
+            className={`rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+              demoGender === 'men'
+                ? 'bg-accent-500/25 text-accent-300 ring-1 ring-accent-400/50'
+                : 'bg-ink-800 text-ink-300 active:bg-ink-700'
+            }`}
+          >
+            {seeding === 'men' ? '...' : `👨 Męska (${DEMO_MEN_COUNT})`}
+          </button>
+          {counts.laundry > 0 && (
+            <button
+              onClick={handleWashAll}
+              className="flex items-center gap-1.5 rounded-full bg-sky-500/20 px-3 py-1.5 text-xs font-semibold text-sky-300 active:bg-sky-500/30"
+            >
+              <Sparkles size={13} /> Wypierz ({counts.laundry})
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="no-scrollbar mb-2 flex gap-2 overflow-x-auto px-4">
@@ -284,28 +319,45 @@ export default function Wardrobe({
               : 'Brak ubrań dla wybranych filtrów.'}
           </p>
           {items.length === 0 && (
-            <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+            <div className="mt-4 flex flex-col gap-2.5">
               <button
                 onClick={() => onNavigate('add')}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
               >
                 <Plus size={18} /> Dodaj pierwsze ubranie
               </button>
-              <button
-                onClick={handleSeedDemo}
-                disabled={seeding}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-5 py-3 font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
-              >
-                {seeding ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin" /> Generowanie szafy...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={18} /> Załaduj szafę testową (37)
-                  </>
-                )}
-              </button>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  onClick={() => handleSeedDemo('women')}
+                  disabled={Boolean(seeding)}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-4 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+                >
+                  {seeding === 'women' ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Ładowanie...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} /> 👩 Szafa testowa Damska ({DEMO_WOMEN_COUNT})
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => handleSeedDemo('men')}
+                  disabled={Boolean(seeding)}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-4 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+                >
+                  {seeding === 'men' ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Ładowanie...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} /> 👨 Szafa testowa Męska ({DEMO_MEN_COUNT})
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           )}
         </div>

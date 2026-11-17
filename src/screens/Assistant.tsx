@@ -23,7 +23,13 @@ import {
   importWardrobeBackup,
   toggleSavedOutfitFavorite,
 } from '../lib/db';
-import { clearAllWardrobe, seedDemoWardrobe } from '../lib/demoWardrobe';
+import {
+  DEMO_MEN_COUNT,
+  DEMO_WOMEN_COUNT,
+  clearAllWardrobe,
+  seedDemoWardrobe,
+  type DemoWardrobeGender,
+} from '../lib/demoWardrobe';
 import {
   CATEGORY_LABELS,
   OCCASIONS,
@@ -332,19 +338,20 @@ function StatsAndBackupView({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [seeding, setSeeding] = useState(false);
+  const [seeding, setSeeding] = useState<DemoWardrobeGender | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const handleSeedDemo = async () => {
+  const handleSeedDemo = async (gender: DemoWardrobeGender) => {
     if (seeding || busy) return;
-    setSeeding(true);
+    setSeeding(gender);
     try {
-      const count = await seedDemoWardrobe();
-      notify(`Załadowano testową szafę (${count} ubrań) ✨`);
+      const count = await seedDemoWardrobe(gender);
+      const label = gender === 'women' ? 'damską' : 'męską';
+      notify(`Załadowano ${label} szafę testową (${count} ubrań ze zdjęciami) ✨`);
     } catch {
       notify('Błąd podczas ładowania szafy testowej');
     } finally {
-      setSeeding(false);
+      setSeeding(null);
     }
   };
 
@@ -571,44 +578,58 @@ function StatsAndBackupView({
       {/* Szafa testowa (Demo) */}
       <section className="rounded-3xl bg-ink-900 p-4">
         <h2 className="flex items-center gap-2 text-base font-bold">
-          <Sparkles size={18} className="text-accent-400" /> Szafa testowa (Demo)
+          <Sparkles size={18} className="text-accent-400" /> Szafy testowe ze zdjęciami z Internetu
         </h2>
         <p className="mt-1 text-xs text-ink-400">
-          Załaduj 37 gotowych, wyrenderowanych ubrań (w tym wielokolorowych, z nadrukiem i ze wzorem:
-          w paski, kratę, kwiaty oraz groszki), aby od razu przetestować jakość doboru i łączenia
-          wzorów.
+          Wybierz gotową szafę testową ze zdjęciami ubrań pobranymi z Internetu (osobna szafa
+          damska i męska – bez mieszania typów ubrań):
         </p>
-        <div className="mt-3 flex flex-col gap-2.5 sm:flex-row">
+        <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <button
-            onClick={handleSeedDemo}
-            disabled={seeding || busy}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-accent-500/20 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-accent-500/30 disabled:opacity-50"
+            onClick={() => handleSeedDemo('women')}
+            disabled={Boolean(seeding) || busy}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-accent-500/20 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-accent-500/30 disabled:opacity-50"
           >
-            {seeding ? (
+            {seeding === 'women' ? (
               <>
-                <Loader2 size={16} className="animate-spin" /> Generowanie 37 ubrań...
+                <Loader2 size={16} className="animate-spin" /> Ładowanie szafy damskiej...
               </>
             ) : (
               <>
-                <Sparkles size={16} /> Załaduj szafę testową (37 ubrań)
+                <Sparkles size={16} /> 👩 Szafa testowa Damska ({DEMO_WOMEN_COUNT} ubrań)
               </>
             )}
           </button>
-          {items.length > 0 && (
-            <button
-              onClick={handleClearAll}
-              disabled={busy || seeding}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-2xl py-3 text-xs font-semibold transition-colors ${
-                confirmClear
-                  ? 'bg-red-600 text-white'
-                  : 'bg-red-500/15 text-red-300 active:bg-red-500/25'
-              }`}
-            >
-              <Trash2 size={16} />
-              {confirmClear ? 'Dotknij ponownie, aby wyczyścić' : 'Wyczyść całą szafę'}
-            </button>
-          )}
+          <button
+            onClick={() => handleSeedDemo('men')}
+            disabled={Boolean(seeding) || busy}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-accent-500/20 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-accent-500/30 disabled:opacity-50"
+          >
+            {seeding === 'men' ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> Ładowanie szafy męskiej...
+              </>
+            ) : (
+              <>
+                <Sparkles size={16} /> 👨 Szafa testowa Męska ({DEMO_MEN_COUNT} ubrań)
+              </>
+            )}
+          </button>
         </div>
+        {items.length > 0 && (
+          <button
+            onClick={handleClearAll}
+            disabled={busy || Boolean(seeding)}
+            className={`mt-2.5 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-xs font-semibold transition-colors ${
+              confirmClear
+                ? 'bg-red-600 text-white'
+                : 'bg-red-500/15 text-red-300 active:bg-red-500/25'
+            }`}
+          >
+            <Trash2 size={16} />
+            {confirmClear ? 'Dotknij ponownie, aby wyczyścić' : 'Wyczyść całą szafę'}
+          </button>
+        )}
       </section>
     </div>
   );

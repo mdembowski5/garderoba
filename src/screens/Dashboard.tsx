@@ -11,7 +11,13 @@ import type {
 } from '../types';
 import { acceptOutfit, db, saveFavoriteOutfit } from '../lib/db';
 import { recommendOutfit, swapOutfitPiece } from '../lib/outfit';
-import { seedDemoWardrobe } from '../lib/demoWardrobe';
+import {
+  DEMO_MEN_COUNT,
+  DEMO_WOMEN_COUNT,
+  getSavedDemoGender,
+  seedDemoWardrobe,
+  type DemoWardrobeGender,
+} from '../lib/demoWardrobe';
 import { OCCASIONS, PREFERENCE_LABELS } from '../lib/constants';
 import {
   EYE_COLORS,
@@ -65,7 +71,8 @@ export default function Dashboard({
   const [result, setResult] = useState<RecommendResult | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [savedFav, setSavedFav] = useState(false);
-  const [seeding, setSeeding] = useState(false);
+  const [seeding, setSeeding] = useState<DemoWardrobeGender | null>(null);
+  const [demoGender, setDemoGender] = useState<DemoWardrobeGender>(getSavedDemoGender);
   const [locked, setLocked] = useState<Partial<Record<Category, ClothingItem>>>({});
 
   useEffect(() => {
@@ -172,16 +179,19 @@ export default function Dashboard({
     notify('Strój zaakceptowany – miłego dnia! ✨');
   };
 
-  const handleSeedDemo = async () => {
+  const handleSeedDemo = async (gender: DemoWardrobeGender) => {
     if (seeding) return;
-    setSeeding(true);
+    setSeeding(gender);
     try {
-      const count = await seedDemoWardrobe();
-      notify(`Załadowano testową szafę (${count} ubrań) ✨`);
+      setLocked({});
+      const count = await seedDemoWardrobe(gender);
+      setDemoGender(gender);
+      const label = gender === 'women' ? 'damską' : 'męską';
+      notify(`Załadowano ${label} szafę testową (${count} ubrań ze zdjęciami) ✨`);
     } catch {
-      notify('Nie udało się wygenerować szafy testowej');
+      notify('Nie udało się załadować szafy testowej');
     } finally {
-      setSeeding(false);
+      setSeeding(null);
     }
   };
 
@@ -262,31 +272,48 @@ export default function Dashboard({
             <Shirt size={36} className="mx-auto mb-3 text-accent-400" />
             <h2 className="font-bold">Twoja szafa jest pusta</h2>
             <p className="mt-1 text-sm text-ink-400">
-              Dodaj własne ubrania lub jednym kliknięciem załaduj gotową szafę testową (37 ubrań, w tym
-              wielokolorowe, z nadrukiem i ze wzorem), aby przetestować działanie aplikacji.
+              Dodaj własne ubrania lub załaduj gotową szafę testową ze zdjęciami z Internetu (osobna
+              wersja damska i męska):
             </p>
-            <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+            <div className="mt-4 flex flex-col gap-2.5">
               <button
                 onClick={() => onNavigate('add')}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
               >
-                <Plus size={18} /> Dodaj ubranie
+                <Plus size={18} /> Dodaj własne ubranie
               </button>
-              <button
-                onClick={handleSeedDemo}
-                disabled={seeding}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-5 py-3 font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
-              >
-                {seeding ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin" /> Generowanie szafy...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={18} /> Załaduj szafę testową (37)
-                  </>
-                )}
-              </button>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  onClick={() => handleSeedDemo('women')}
+                  disabled={Boolean(seeding)}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-4 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+                >
+                  {seeding === 'women' ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Ładowanie damskiej...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} /> 👩 Szafa testowa Damska ({DEMO_WOMEN_COUNT})
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => handleSeedDemo('men')}
+                  disabled={Boolean(seeding)}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-4 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+                >
+                  {seeding === 'men' ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Ładowanie męskiej...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} /> 👨 Szafa testowa Męska ({DEMO_MEN_COUNT})
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         ) : !weather ? (
@@ -328,31 +355,77 @@ export default function Dashboard({
         ) : result && !result.ok ? (
           <div className="rounded-3xl bg-ink-900 p-6 text-center">
             <p className="text-sm text-ink-300">{result.message}</p>
-            <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+            <div className="mt-4 flex flex-col gap-2.5">
               <button
                 onClick={() => onNavigate('add')}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent-500 px-5 py-3 font-semibold"
               >
                 <Plus size={18} /> Dodaj ubranie
               </button>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  onClick={() => handleSeedDemo('women')}
+                  disabled={Boolean(seeding)}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-4 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+                >
+                  <Sparkles size={16} /> 👩 Szafa testowa Damska ({DEMO_WOMEN_COUNT})
+                </button>
+                <button
+                  onClick={() => handleSeedDemo('men')}
+                  disabled={Boolean(seeding)}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-4 py-3 text-xs font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+                >
+                  <Sparkles size={16} /> 👨 Szafa testowa Męska ({DEMO_MEN_COUNT})
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Szybki przełącznik szafy testowej (Damska vs Męska) */}
+        {!empty && (
+          <div className="rounded-2xl bg-ink-900/90 p-3 ring-1 ring-white/10">
+            <div className="mb-2 flex items-center justify-between text-xs text-ink-400">
+              <span className="font-semibold text-ink-300">
+                ✨ Przełącz zestaw testowy (zdjęcia z Internetu):
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={handleSeedDemo}
-                disabled={seeding}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink-800 px-5 py-3 font-semibold text-accent-300 ring-1 ring-accent-400/40 active:bg-ink-700 disabled:opacity-50"
+                type="button"
+                onClick={() => handleSeedDemo('women')}
+                disabled={Boolean(seeding)}
+                className={`flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                  demoGender === 'women'
+                    ? 'bg-accent-500/25 text-accent-300 ring-1 ring-accent-400/50'
+                    : 'bg-ink-800 text-ink-300 active:bg-ink-700'
+                }`}
               >
-                {seeding ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin" /> Generowanie...
-                  </>
+                {seeding === 'women' ? (
+                  <Loader2 size={14} className="animate-spin" />
                 ) : (
-                  <>
-                    <Sparkles size={18} /> Załaduj szafę testową (37)
-                  </>
+                  <span>👩 Damska ({DEMO_WOMEN_COUNT})</span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSeedDemo('men')}
+                disabled={Boolean(seeding)}
+                className={`flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                  demoGender === 'men'
+                    ? 'bg-accent-500/25 text-accent-300 ring-1 ring-accent-400/50'
+                    : 'bg-ink-800 text-ink-300 active:bg-ink-700'
+                }`}
+              >
+                {seeding === 'men' ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <span>👨 Męska ({DEMO_MEN_COUNT})</span>
                 )}
               </button>
             </div>
           </div>
-        ) : null}
+        )}
       </div>
 
       <PersonalPaletteSheet
