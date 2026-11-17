@@ -1,6 +1,10 @@
 import Dexie, { type Table } from 'dexie';
 import type { ClothingItem, NewClothingItem, Occasion, Outfit, SavedOutfit } from '../types';
-import { defaultOccasions } from './constants';
+import {
+  defaultFitForSubCategory,
+  defaultMaxWearsForSubCategory,
+  defaultOccasions,
+} from './constants';
 
 class WardrobeDB extends Dexie {
   items!: Table<ClothingItem, string>;
@@ -61,10 +65,17 @@ export async function addItem(data: NewClothingItem): Promise<ClothingItem> {
     secondaryColors: data.secondaryColors ? [...data.secondaryColors] : [],
     secondaryColorHexes: data.secondaryColorHexes ? [...data.secondaryColorHexes] : [],
     pattern: data.pattern ?? 'solid',
+    fit: data.fit ?? defaultFitForSubCategory(data.category, data.subCategory),
+    price: data.price,
+    brand: data.brand,
     brightnessType: data.brightnessType,
     occasions: data.occasions?.length ? [...data.occasions] : ['casual'],
     createdAt: Date.now(),
     wearCount: 0,
+    wearsSinceWash: 0,
+    maxWearsBeforeLaundry:
+      data.maxWearsBeforeLaundry ??
+      defaultMaxWearsForSubCategory(data.category, data.subCategory),
     inLaundry: false,
     isFavorite: false,
   };
@@ -101,6 +112,7 @@ export async function updateItem(id: string, patch: Partial<ClothingItem>): Prom
 export function outfitItemIds(outfit: Outfit): string[] {
   return [
     outfit.top?.id,
+    outfit.midLayer?.id,
     outfit.bottom?.id,
     outfit.onepiece?.id,
     outfit.shoes?.id,
@@ -110,14 +122,19 @@ export function outfitItemIds(outfit: Outfit): string[] {
   ].filter((x): x is string => Boolean(x));
 }
 
-/** Zapisuje zaakceptowany strój, zwiększa licznik założeń i oznacza ubrania jako niedawno noszone. */
+/**
+ * Zapisuje zaakceptowany strój, zwiększa licznik założeń, oznacza ubrania jako niedawno noszone
+ * i automatycznie przenosi ubrania do kosza na pranie po przekroczeniu progu założeń.
+ */
 export async function acceptOutfit(
   outfit: Outfit,
   apparentTemperature: number,
   occasion?: Occasion
-): Promise<void> {
+): Promise<{ movedToLaundry: string[] }> {
   const ids = outfitItemIds(outfit);
   const now = Date.now();
+  const movedToLaundry: string[] = [];
+
   await db.transaction('rw', db.items, db.outfits, async () => {
     await db.outfits.add({
       id: newId(),
@@ -131,15 +148,27 @@ export async function acceptOutfit(
     for (const id of ids) {
       const existing = await db.items.get(id);
       if (!existing) continue;
+      const maxWears =
+        existing.maxWearsBeforeLaundry ??
+        defaultMaxWearsForSubCategory(existing.category, existing.subCategory);
+      const nextSinceWash = (existing.wearsSinceWash ?? 0) + 1;
+      const shouldWash = maxWears < 90 && nextSinceWash >= maxWears;
+      if (shouldWash && !existing.inLaundry) {
+        movedToLaundry.push(existing.subCategory);
+      }
       const updated: ClothingItem = {
         ...existing,
         lastWornAt: now,
         wearCount: (existing.wearCount ?? 0) + 1,
+        wearsSinceWash: shouldWash ? 0 : nextSinceWash,
+        inLaundry: shouldWash ? true : existing.inLaundry,
       };
       delete updated.imageBlob;
       await db.items.put(updated);
     }
   });
+
+  return { movedToLaundry };
 }
 
 /** Zapisuje stylizację jako ulubioną. */
@@ -174,7 +203,21 @@ export async function clearLaundry(): Promise<void> {
   const dirty = all.filter((i) => i.inLaundry);
   if (dirty.length === 0) return;
   const cleaned = dirty.map((item) => {
-    const copy: ClothingItem = { ...item, inLaundry: false };
+    const copy: ClothingItem = { ...item, inLaundry: false, wearsSinceWash: 0 };
+    delete copy.imageBlob;
+    return copy;
+  });
+  await db.items.bulkPut(cleaned);
+}
+
+/** Oznacza wybrany wsad prania (listę ID) jako wyprany i czysty. */
+export async function clearLaundryByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const idSet = new Set(ids);
+  const all = await db.items.toArray();
+  const dirty = all.filter((i) => idSet.has(i.id));
+  const cleaned = dirty.map((item) => {
+    const copy: ClothingItem = { ...item, inLaundry: false, wearsSinceWash: 0 };
     delete copy.imageBlob;
     return copy;
   });

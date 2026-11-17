@@ -9,7 +9,14 @@ import {
   RotateCcw,
   Sparkles,
 } from 'lucide-react';
-import type { BrightnessType, Category, Occasion, PatternType, TempRange } from '../types';
+import type {
+  BrightnessType,
+  Category,
+  FitType,
+  Occasion,
+  PatternType,
+  TempRange,
+} from '../types';
 import { addItem } from '../lib/db';
 import { compressImage, removeBackgroundImage, type CompressedImage } from '../lib/image';
 import { analyzeImage, type ColorAnalysis, type Point2D } from '../lib/colorAnalysis';
@@ -24,12 +31,14 @@ import {
   CATEGORY_EMOJIS,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
+  FIT_TYPES,
   OCCASIONS,
   PATTERNS,
   PATTERN_EMOJIS,
   PATTERN_LABELS,
   SUBCATEGORIES,
   TEMP_RANGES,
+  defaultFitForSubCategory,
 } from '../lib/constants';
 import { Chip, ColorDot, ColorDots, Segmented } from '../components/ui';
 
@@ -74,6 +83,9 @@ export default function AddItem({
   const [secondaryColors, setSecondaryColors] = useState<string[]>([]);
   const [secondaryColorHexes, setSecondaryColorHexes] = useState<string[]>([]);
   const [pattern, setPattern] = useState<PatternType>('solid');
+  const [fit, setFit] = useState<FitType>('regular');
+  const [price, setPrice] = useState('');
+  const [brand, setBrand] = useState('');
   const [brightness, setBrightness] = useState<BrightnessType>('neutral');
   const [colorEdited, setColorEdited] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -93,6 +105,7 @@ export default function AddItem({
     setTempIdx(TEMP_IDS.indexOf(preset.temp));
     setRainproof(Boolean(preset.rainproof));
     setOccasions([...preset.occasions]);
+    setFit(defaultFitForSubCategory(cat, label));
   };
 
   const toggleOccasion = (o: Occasion) =>
@@ -245,6 +258,9 @@ export default function AddItem({
         secondaryColors,
         secondaryColorHexes,
         pattern,
+        fit,
+        price: price && Number(price) > 0 ? Math.round(Number(price)) : undefined,
+        brand: brand.trim() || undefined,
         brightnessType: brightness,
         occasions: occasions.length ? occasions : ['casual'],
       });
@@ -441,6 +457,36 @@ export default function AddItem({
                   {pt.emoji} {pt.label}
                 </Chip>
               ))}
+            </div>
+          </Field>
+
+          <Field label="Krój / fason (do zasady proporcji sylwetki)">
+            <div className="flex flex-wrap gap-2">
+              {FIT_TYPES.map((f) => (
+                <Chip key={f.id} active={fit === f.id} onClick={() => setFit(f.id)}>
+                  {f.emoji} {f.label}
+                </Chip>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Cena zakupu i marka (opcjonalnie – do wyliczania Cost Per Wear)">
+            <div className="grid grid-cols-2 gap-2.5">
+              <input
+                type="number"
+                min={0}
+                placeholder="Cena (np. 149 zł)"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                className="rounded-2xl bg-ink-800 px-3.5 py-2.5 text-sm text-white placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-accent-400"
+              />
+              <input
+                type="text"
+                placeholder="Marka (np. Zara, COS)"
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                className="rounded-2xl bg-ink-800 px-3.5 py-2.5 text-sm text-white placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-accent-400"
+              />
             </div>
           </Field>
 

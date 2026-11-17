@@ -10,6 +10,7 @@ import type {
   RecommendResult,
 } from '../types';
 import { acceptOutfit, db, saveFavoriteOutfit } from '../lib/db';
+import { exportOutfitCollage } from '../lib/collage';
 import { recommendOutfit, swapOutfitPiece } from '../lib/outfit';
 import {
   DEMO_MEN_COUNT,
@@ -18,7 +19,7 @@ import {
   seedDemoWardrobe,
   type DemoWardrobeGender,
 } from '../lib/demoWardrobe';
-import { OCCASIONS, PREFERENCE_LABELS } from '../lib/constants';
+import { BODY_SHAPES, OCCASIONS, PREFERENCE_LABELS } from '../lib/constants';
 import {
   EYE_COLORS,
   HAIR_COLORS,
@@ -174,9 +175,29 @@ export default function Dashboard({
 
   const accept = async () => {
     if (!result?.ok || !weather || accepted) return;
-    await acceptOutfit(result.outfit, weather.apparentTemperature, occasion);
+    const { movedToLaundry } = await acceptOutfit(
+      result.outfit,
+      weather.apparentTemperature,
+      occasion
+    );
     setAccepted(true);
-    notify('Strój zaakceptowany – miłego dnia! ✨');
+    if (movedToLaundry.length > 0) {
+      notify(
+        `Strój zaakceptowany ✨ Do kosza na pranie trafiły: ${movedToLaundry.join(', ')} 🧺`
+      );
+    } else {
+      notify('Strój zaakceptowany – miłego dnia! ✨');
+    }
+  };
+
+  const handleExportCollage = async () => {
+    if (!result?.ok) return;
+    try {
+      await exportOutfitCollage(result.outfit, weather, occasion);
+      notify('Pobrano kartę stylizacji (JPG) 📸');
+    } catch {
+      notify('Nie udało się wygenerować kolażu');
+    }
   };
 
   const handleSeedDemo = async (gender: DemoWardrobeGender) => {
@@ -231,7 +252,22 @@ export default function Dashboard({
             <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
               <Palette size={14} className="shrink-0 text-accent-400" />
               <span className="truncate">
-                Paleta urody: {season.emoji} {season.name}
+                Uroda: {season.emoji} {season.name} ·{' '}
+                {
+                  (
+                    BODY_SHAPES.find((b) => b.id === (personalProfile.bodyShape ?? 'hourglass')) ??
+                    BODY_SHAPES[0]
+                  ).emoji
+                }{' '}
+                {
+                  (
+                    BODY_SHAPES.find((b) => b.id === (personalProfile.bodyShape ?? 'hourglass')) ??
+                    BODY_SHAPES[0]
+                  ).label.split(' ')[0]
+                }
+                {personalProfile.thermalOffset
+                  ? ` · ${personalProfile.thermalOffset > 0 ? '+' : ''}${personalProfile.thermalOffset}°C`
+                  : ''}
                 {!personalProfile.enabled ? ' (wył.)' : ''}
               </span>
             </div>
@@ -327,6 +363,7 @@ export default function Dashboard({
               onSwapPiece={handleSwapPiece}
               isSavedFavorite={savedFav}
               onSaveFavorite={handleSaveFavorite}
+              onExportCollage={handleExportCollage}
             />
             <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
               <button

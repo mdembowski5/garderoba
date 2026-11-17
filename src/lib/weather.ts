@@ -1,4 +1,4 @@
-import type { Place, TempRange, WeatherData, WeatherKind } from '../types';
+import type { DailyForecastDay, Place, TempRange, WeatherData, WeatherKind } from '../types';
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
@@ -22,12 +22,33 @@ export const POPULAR_PLACES: Place[] = [
 export async function fetchWeather(lat: number, lon: number, signal?: AbortSignal): Promise<WeatherData> {
   const url =
     `${FORECAST_URL}?latitude=${lat}&longitude=${lon}` +
-    `&current=temperature_2m,apparent_temperature,precipitation,weather_code,is_day&timezone=auto`;
+    `&current=temperature_2m,apparent_temperature,precipitation,weather_code,is_day` +
+    `&daily=weather_code,apparent_temperature_max,apparent_temperature_min,precipitation_sum` +
+    `&forecast_days=7&timezone=auto`;
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`Open-Meteo: HTTP ${res.status}`);
   const json = await res.json();
   const c = json.current;
   if (!c) throw new Error('Open-Meteo: brak danych bieżących');
+
+  let daily: DailyForecastDay[] | undefined;
+  if (json.daily && Array.isArray(json.daily.time)) {
+    daily = json.daily.time.map((date: string, i: number) => {
+      const tMax = Number(json.daily.apparent_temperature_max?.[i] ?? c.apparent_temperature);
+      const tMin = Number(json.daily.apparent_temperature_min?.[i] ?? c.apparent_temperature - 5);
+      // Średnia odczuwalna w ciągu dnia (bliżej maksimum dziennego)
+      const apparentTemperature = Math.round(tMax * 0.72 + tMin * 0.28);
+      return {
+        date,
+        apparentTempMax: Math.round(tMax),
+        apparentTempMin: Math.round(tMin),
+        apparentTemperature,
+        precipitationSum: Number(json.daily.precipitation_sum?.[i] ?? 0),
+        weatherCode: Number(json.daily.weather_code?.[i] ?? c.weather_code),
+      };
+    });
+  }
+
   return {
     temperature: c.temperature_2m,
     apparentTemperature: c.apparent_temperature,
@@ -35,7 +56,35 @@ export async function fetchWeather(lat: number, lon: number, signal?: AbortSigna
     weatherCode: c.weather_code,
     isDay: c.is_day === 1,
     fetchedAt: Date.now(),
+    daily,
   };
+}
+
+/** Zwraca 7-dniową prognozę (z API lub wygenerowaną wokół bieżącej pogody, jeśli dane z pamięci podręcznej nie mają jeszcze tablicy daily). */
+export function get7DayForecast(weather: WeatherData): DailyForecastDay[] {
+  if (weather.daily && weather.daily.length >= 7) {
+    return weather.daily.slice(0, 7);
+  }
+  const baseTemp = Math.round(weather.apparentTemperature);
+  const deltas = [0, 1, -2, -1, 2, 3, 0];
+  const codes = [weather.weatherCode, 1, 3, 61, 2, 0, 1];
+  const days: DailyForecastDay[] = [];
+  const now = new Date();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now.getTime() + i * 24 * 3600 * 1000);
+    const dateStr = d.toISOString().slice(0, 10);
+    const appTemp = baseTemp + deltas[i];
+    const code = codes[i];
+    days.push({
+      date: dateStr,
+      apparentTempMax: appTemp + 2,
+      apparentTempMin: appTemp - 5,
+      apparentTemperature: appTemp,
+      precipitationSum: code >= 51 ? 2.4 : 0,
+      weatherCode: code,
+    });
+  }
+  return days;
 }
 
 export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {

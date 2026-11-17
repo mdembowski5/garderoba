@@ -1,11 +1,14 @@
 import type {
+  BodyShapeId,
   Category,
   ColorSeasonId,
   EyeColorId,
+  FitType,
   HairColorId,
   PersonalColorProfile,
   SkinToneId,
 } from '../types';
+import { BODY_SHAPES, FIT_TYPES } from './constants';
 import { PALETTE, hexToRgb } from './palette';
 
 export const PERSONAL_PROFILE_KEY = 'garderoba.personalProfile';
@@ -308,6 +311,9 @@ export const DEFAULT_PERSONAL_PROFILE: PersonalColorProfile = {
   skinTone: 'light-neutral',
   hairColor: 'ash-brown',
   eyeColor: 'blue',
+  bodyShape: 'hourglass',
+  preferredFit: 'regular',
+  thermalOffset: 0,
 };
 
 export function loadPersonalProfile(): PersonalColorProfile {
@@ -324,11 +330,26 @@ export function loadPersonalProfile(): PersonalColorProfile {
     const eyeColor = EYE_COLORS.some((e) => e.id === parsed.eyeColor)
       ? (parsed.eyeColor as EyeColorId)
       : DEFAULT_PERSONAL_PROFILE.eyeColor;
+    const bodyShape = BODY_SHAPES.some((b) => b.id === parsed.bodyShape)
+      ? (parsed.bodyShape as BodyShapeId)
+      : DEFAULT_PERSONAL_PROFILE.bodyShape;
+    const preferredFit = FIT_TYPES.some((f) => f.id === parsed.preferredFit)
+      ? (parsed.preferredFit as FitType)
+      : DEFAULT_PERSONAL_PROFILE.preferredFit;
+    const thermalOffset =
+      typeof parsed.thermalOffset === 'number' &&
+      parsed.thermalOffset >= -5 &&
+      parsed.thermalOffset <= 5
+        ? parsed.thermalOffset
+        : 0;
     return {
       enabled: parsed.enabled !== false,
       skinTone,
       hairColor,
       eyeColor,
+      bodyShape,
+      preferredFit,
+      thermalOffset,
     };
   } catch {
     return DEFAULT_PERSONAL_PROFILE;

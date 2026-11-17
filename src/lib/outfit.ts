@@ -2,7 +2,9 @@ import type {
   BrightnessType,
   Category,
   ClothingItem,
+  DailyForecastDay,
   DayPreference,
+  FitType,
   Occasion,
   Outfit,
   PatternType,
@@ -11,14 +13,19 @@ import type {
   TempRange,
   WeatherData,
 } from '../types';
-import { CATEGORY_LABELS, OCCASION_LABELS, PATTERN_LABELS } from './constants';
+import {
+  CATEGORY_LABELS,
+  OCCASION_LABELS,
+  PATTERN_LABELS,
+  defaultFitForSubCategory,
+} from './constants';
 import { colorHarmony, garmentHarmony, isVivid } from './palette';
 import {
   evaluateColorForPerson,
   loadPersonalProfile,
   type PersonalColorEvaluation,
 } from './personalColor';
-import { isSunny, isWet, tempRangeFor } from './weather';
+import { get7DayForecast, isSunny, isWet, tempRangeFor } from './weather';
 
 export interface RecommendOptions {
   preference: DayPreference;
@@ -187,9 +194,113 @@ function isPatterned(item?: Pick<ClothingItem, 'pattern'>): boolean {
   return Boolean(item?.pattern && item.pattern !== 'solid');
 }
 
+function resolveFit(item: ClothingItem): FitType {
+  return item.fit ?? defaultFitForSubCategory(item.category, item.subCategory);
+}
+
+/**
+ * Zasada proporcji sylwetki (Rule of Proportions): ocenia balans objętości między górą a dołem
+ * oraz dopasowanie do wybranego typu sylwetki użytkownika.
+ */
+export function evaluateBodyProportion(
+  top: ClothingItem,
+  bottom: ClothingItem,
+  occasion: Occasion,
+  profile?: PersonalColorProfile
+): { factor: number; scoreDelta: number; note?: string } {
+  const topFit = resolveFit(top);
+  const botFit = resolveFit(bottom);
+  const shape = profile?.bodyShape ?? 'hourglass';
+  const prefFit = profile?.preferredFit ?? 'regular';
+
+  let factor = 1.0;
+  let scoreDelta = 0;
+  let note: string | undefined;
+
+  // 1. Balans objętości (Volume Balance)
+  if ((topFit === 'oversize' && botFit === 'slim') || (topFit === 'slim' && botFit === 'oversize')) {
+    factor *= 1.18;
+    scoreDelta += 4;
+    note =
+      topFit === 'oversize'
+        ? '🧍 Zasada proporcji: luźniejsza góra (oversize) + dopasowany dół równoważą sylwetkę.'
+        : '🧍 Zasada proporcji: dopasowana góra + luźniejszy dół wydłużają linię nóg.';
+  } else if (topFit === 'oversize' && botFit === 'oversize') {
+    if (occasion === 'work' || occasion === 'formal') {
+      factor *= 0.6;
+      scoreDelta -= 6;
+    } else {
+      factor *= 0.9;
+    }
+  } else if (topFit === 'regular' || botFit === 'regular') {
+    factor *= 1.06;
+    scoreDelta += 2;
+  }
+
+  // 2. Zgodność z ulubionym krojem użytkownika
+  if (topFit === prefFit || botFit === prefFit) {
+    factor *= 1.08;
+  }
+
+  // 3. Dopasowanie do konkretnego typu sylwetki
+  if (shape === 'pear') {
+    if (
+      (top.brightnessType === 'light' || isPatterned(top)) &&
+      bottom.brightnessType !== 'light' &&
+      !isPatterned(bottom)
+    ) {
+      factor *= 1.22;
+      scoreDelta += 4;
+      note =
+        '🧍 Sylwetka Gruszka: jaśniejsza/wzorzysta góra i gładki ciemniejszy dół wyrównują proporcje ramion i bioder.';
+    }
+  } else if (shape === 'inverted_triangle') {
+    if (!isPatterned(top) && (bottom.brightnessType === 'light' || botFit !== 'slim')) {
+      factor *= 1.18;
+      scoreDelta += 3;
+      note =
+        '🧍 Sylwetka Odwrócony trójkąt: stonowana góra i wyrazistszy dół równoważą linię ramion.';
+    }
+  } else if (shape === 'apple') {
+    if ((topFit === 'regular' || topFit === 'oversize') && botFit !== 'oversize') {
+      factor *= 1.18;
+      scoreDelta += 3;
+      note =
+        '🧍 Sylwetka Jabłko: swobodna góra i smukły dół optycznie wysmuklają środek sylwetki.';
+    }
+  }
+
+  return { factor, scoreDelta, note };
+}
+
+function isLightBaseTop(item: ClothingItem): boolean {
+  const s = item.subCategory.toLowerCase();
+  return (
+    s.includes('t-shirt') ||
+    s.includes('top') ||
+    s.includes('polo') ||
+    s.includes('koszula') ||
+    s.includes('bluzka') ||
+    s.includes('longsleeve') ||
+    s.includes('body')
+  );
+}
+
+function isWarmMidLayerTop(item: ClothingItem): boolean {
+  const s = item.subCategory.toLowerCase();
+  return (
+    s.includes('sweter') ||
+    s.includes('kardigan') ||
+    s.includes('bluza') ||
+    s.includes('kamizelka') ||
+    s.includes('koszula w krat')
+  );
+}
+
 export function computeOutfitScore(
   outfit: {
     top?: ClothingItem;
+    midLayer?: ClothingItem;
     bottom?: ClothingItem;
     onepiece?: ClothingItem;
     shoes?: ClothingItem;
@@ -214,6 +325,9 @@ export function computeOutfitScore(
   } else {
     harmonies.push(0.92);
   }
+  if (outfit.midLayer && outfit.top) {
+    harmonies.push(garmentHarmony(outfit.midLayer, outfit.top).score);
+  }
   if (outfit.shoes) harmonies.push(garmentHarmony(outfit.shoes, secondaryItem).score);
   if (outfit.outerwear) {
     const outerH1 = garmentHarmony(outfit.outerwear, primaryItem).score;
@@ -225,6 +339,7 @@ export function computeOutfitScore(
   // Kara za nadmiar wzorów (3 lub więcej elementów ze wzorem/nadrukiem w jednym zestawie)
   const patternedCount = [
     outfit.top,
+    outfit.midLayer,
     outfit.bottom,
     outfit.onepiece,
     outfit.outerwear,
@@ -235,13 +350,25 @@ export function computeOutfitScore(
   let patternPenalty = 0;
   if (patternedCount >= 3) patternPenalty = 22;
 
-  const baseScore =
-    (harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100 - patternPenalty;
-
   const activeProfile = profile ?? loadPersonalProfile();
+  let proportionBonus = 0;
+  if (outfit.top && outfit.bottom) {
+    proportionBonus = evaluateBodyProportion(
+      outfit.top,
+      outfit.bottom,
+      'casual',
+      activeProfile
+    ).scoreDelta;
+  }
+
+  const baseScore =
+    (harmonies.reduce((s, h) => s + h, 0) / harmonies.length) * 100 -
+    patternPenalty +
+    proportionBonus;
+
   if (!activeProfile.enabled) return Math.max(25, Math.min(100, Math.round(baseScore)));
 
-  const faceItem = outfit.onepiece ?? outfit.top;
+  const faceItem = outfit.onepiece ?? outfit.midLayer ?? outfit.top;
   if (!faceItem) return Math.max(25, Math.min(100, Math.round(baseScore)));
   const ev = evaluateColorForPerson(
     faceItem.dominantColor,
@@ -254,6 +381,7 @@ export function computeOutfitScore(
 
 export function computeSignature(outfit: {
   top?: ClothingItem;
+  midLayer?: ClothingItem;
   bottom?: ClothingItem;
   onepiece?: ClothingItem;
   shoes?: ClothingItem;
@@ -263,6 +391,7 @@ export function computeSignature(outfit: {
 }): string {
   return [
     outfit.top,
+    outfit.midLayer,
     outfit.bottom,
     outfit.onepiece,
     outfit.shoes,
@@ -357,7 +486,9 @@ function buildOutfit(
   now: number
 ): Outfit {
   const notes: string[] = [];
-  const target = tempRangeFor(weather.apparentTemperature);
+  const effectiveApparent =
+    weather.apparentTemperature + (personalProfile.thermalOffset ?? 0);
+  const target = tempRangeFor(effectiveApparent);
   const wet = isWet(weather);
   const byCat = (c: Category, label?: string) =>
     cleanPool(
@@ -388,10 +519,10 @@ function buildOutfit(
       for (const bottom of bottomPool) {
         const gh = garmentHarmony(top, bottom);
         const h = gh.score;
+        const prop = evaluateBodyProportion(top, bottom, occasion, personalProfile);
         const occMatch =
           (occasionsOf(top).includes(occasion) ? 1 : 0.45) *
           (occasionsOf(bottom).includes(occasion) ? 1 : 0.45);
-        // Na eleganckie okazje preferujemy ubrania gładkie lub klasyczny wzór zamiast nadruków t-shirtowych
         const formalPatternFactor =
           occasion === 'formal' && (top.pattern === 'print' || bottom.pattern === 'print')
             ? 0.35
@@ -400,6 +531,7 @@ function buildOutfit(
           ((tempFit(top, target) + tempFit(bottom, target)) / 2) *
           occMatch *
           formalPatternFactor *
+          prop.factor *
           personalFactor(top, personalProfile) *
           personalFactor(bottom, personalProfile) *
           wornFactor(top, now) *
@@ -471,6 +603,37 @@ function buildOutfit(
     const pairHarm = garmentHarmony(top, bottom);
     if (pairHarm.stylistNote && (isPatterned(top) || isPatterned(bottom) || pairHarm.hasColorBridge)) {
       notes.push(`🎨 ${pairHarm.stylistNote}`);
+    }
+    const prop = evaluateBodyProportion(top, bottom, occasion, personalProfile);
+    if (prop.note) {
+      notes.push(prop.note);
+    }
+  }
+
+  // ----- Druga warstwa góry („ubieranie na cebulkę”) -----
+  let midLayer: ClothingItem | undefined;
+  if (top && bottom && effectiveApparent <= 16 && isLightBaseTop(top)) {
+    const midCandidates = allTops.filter(
+      (m) =>
+        m.id !== top.id &&
+        isWarmMidLayerTop(m) &&
+        occasionsOf(m).includes(occasion) &&
+        !(isPatterned(top) && isPatterned(m))
+    );
+    if (midCandidates.length > 0 && (effectiveApparent < 12 || rng() < 0.65)) {
+      midLayer = pickWeighted(
+        midCandidates,
+        (m) =>
+          ((garmentHarmony(m, top).score + garmentHarmony(m, bottom).score) / 2) *
+          personalFactor(m, personalProfile) *
+          wornFactor(m, now),
+        rng
+      );
+      if (midLayer) {
+        notes.push(
+          `🧅 Warstwowanie „na cebulkę”: baza (${top.subCategory}) + ciepła warstwa (${midLayer.subCategory}).`
+        );
+      }
     }
   }
 
@@ -568,7 +731,7 @@ function buildOutfit(
   // ----- Dodatki (1–2) -----
   const accessories = pickAccessories(byCat('accessory'), weather, target, occasion, rng, now);
 
-  const partial = { top, bottom, onepiece, shoes, outerwear, bag, accessories };
+  const partial = { top, midLayer, bottom, onepiece, shoes, outerwear, bag, accessories };
   return {
     ...partial,
     notes: Array.from(new Set(notes)),
@@ -1071,4 +1234,363 @@ export function analyzePurchaseCandidate(
     warnings,
   };
 }
+
+// ---------- 1. Planer stylizacji na 7 dni (Tygodniowy Kalendarz Pogodowy) ----------
+
+export interface WeeklyPlanDay {
+  dayIndex: number;
+  date: string;
+  dayLabel: string;
+  forecast: DailyForecastDay;
+  occasion: Occasion;
+  outfit: Outfit | null;
+}
+
+export function generateWeeklyPlan(
+  items: ClothingItem[],
+  weather: WeatherData,
+  occasionsByDay: Occasion[],
+  personalProfile?: PersonalColorProfile,
+  baseSeed = 101
+): WeeklyPlanDay[] {
+  const forecast = get7DayForecast(weather);
+  const profile = personalProfile ?? loadPersonalProfile();
+  const usedSignatures = new Set<string>();
+  const prevTopIds: string[] = [];
+  const prevBottomIds: string[] = [];
+
+  return forecast.map((day, idx) => {
+    const occasion = occasionsByDay[idx] ?? 'casual';
+    const dObj = new Date(day.date + 'T12:00:00');
+    const dayLabel =
+      idx === 0
+        ? 'Dziś'
+        : idx === 1
+        ? 'Jutro'
+        : dObj.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'short' });
+
+    const dayWeather: WeatherData = {
+      temperature: day.apparentTemperature,
+      apparentTemperature: day.apparentTemperature,
+      precipitation: day.precipitationSum,
+      weatherCode: day.weatherCode,
+      isDay: true,
+      fetchedAt: weather.fetchedAt,
+    };
+
+    // Unikamy powtarzania tej samej góry/dołu dzień po dniu, jeśli w szafie są alternatywy
+    const filteredPool = items.filter((item) => {
+      if (item.category === 'top' && prevTopIds.slice(-2).includes(item.id)) {
+        const otherTops = items.filter((t) => t.category === 'top' && !t.inLaundry);
+        if (otherTops.length > 2) return false;
+      }
+      if (item.category === 'bottom' && prevBottomIds.slice(-1).includes(item.id)) {
+        const otherBots = items.filter((b) => b.category === 'bottom' && !b.inLaundry);
+        if (otherBots.length > 1) return false;
+      }
+      return true;
+    });
+
+    const res = recommendOutfit(filteredPool.length >= 2 ? filteredPool : items, dayWeather, {
+      preference: 'any',
+      occasion,
+      personalProfile: profile,
+      seed: baseSeed + idx * 997,
+      exclude: usedSignatures,
+    });
+
+    const outfit = res.ok ? res.outfit : null;
+    if (outfit) {
+      usedSignatures.add(outfit.signature);
+      if (outfit.top) prevTopIds.push(outfit.top.id);
+      if (outfit.bottom) prevBottomIds.push(outfit.bottom.id);
+    }
+
+    return {
+      dayIndex: idx,
+      date: day.date,
+      dayLabel: dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1),
+      forecast: day,
+      occasion,
+      outfit,
+    };
+  });
+}
+
+// ---------- 2. Kreator Szafy Kapsułowej i „Smart Wishlist” ----------
+
+export interface CapsuleWardrobeResult {
+  capsuleItems: { item: ClothingItem; versatilityScore: number }[];
+  totalCombinations: number;
+  averageHarmony: number;
+}
+
+export function buildCapsuleWardrobe(
+  items: ClothingItem[],
+  seasonTemp: TempRange,
+  profile?: PersonalColorProfile
+): CapsuleWardrobeResult {
+  const activeProfile = profile ?? loadPersonalProfile();
+  const clean = items.filter((i) => !i.inLaundry);
+  const pool = clean.length >= 6 ? clean : items;
+
+  const versatilityOf = (item: ClothingItem): number => {
+    const others = pool.filter((o) => o.id !== item.id && o.category !== item.category);
+    if (others.length === 0) return 80;
+    const avgHarm =
+      others.reduce((s, o) => s + garmentHarmony(item, o).score, 0) / others.length;
+    const tBoost = tempDistance(item.tempRange, seasonTemp) <= 1 ? 1.12 : 0.86;
+    const pBoost = personalFactor(item, activeProfile) >= 1.1 ? 1.08 : 0.96;
+    const solidBoost = (item.pattern ?? 'solid') === 'solid' ? 1.06 : 0.98;
+    return Math.min(99, Math.round(avgHarm * 100 * tBoost * pBoost * solidBoost));
+  };
+
+  const pickByCat = (cat: Category, maxCount: number) =>
+    pool
+      .filter((i) => i.category === cat)
+      .map((item) => ({ item, versatilityScore: versatilityOf(item) }))
+      .sort((a, b) => b.versatilityScore - a.versatilityScore)
+      .slice(0, maxCount);
+
+  const tops = pickByCat('top', 5);
+  const bottoms = pickByCat('bottom', 4);
+  const onepieces = pickByCat('onepiece', 1);
+  const outerwear = pickByCat('outerwear', 2);
+  const shoes = pickByCat('shoes', 2);
+  const bags = pickByCat('bag', 1);
+
+  const capsuleItems = [...tops, ...bottoms, ...onepieces, ...outerwear, ...shoes, ...bags];
+  const pairCount = tops.length * bottoms.length + onepieces.length;
+  const totalCombinations =
+    pairCount * Math.max(1, shoes.length) * Math.max(1, outerwear.length);
+  const averageHarmony =
+    capsuleItems.length > 0
+      ? Math.round(
+          capsuleItems.reduce((s, c) => s + c.versatilityScore, 0) / capsuleItems.length
+        )
+      : 0;
+
+  return {
+    capsuleItems,
+    totalCombinations,
+    averageHarmony,
+  };
+}
+
+export interface SmartWishlistSuggestion {
+  title: string;
+  category: Category;
+  subCategory: string;
+  dominantColor: string;
+  colorHex: string;
+  newOutfitsCount: number;
+  overallScore: number;
+  reason: string;
+}
+
+const CLASSIC_STAPLES: PurchaseCandidateInput[] = [
+  {
+    category: 'top',
+    subCategory: 'koszula klasyczna',
+    dominantColor: 'Biel',
+    colorHex: '#f5f5f3',
+    pattern: 'solid',
+    brightnessType: 'light',
+    occasions: ['work', 'formal', 'casual', 'party'],
+  },
+  {
+    category: 'bottom',
+    subCategory: 'spodnie materiałowe / chinosy',
+    dominantColor: 'Beż',
+    colorHex: '#d8c3a5',
+    pattern: 'solid',
+    brightnessType: 'light',
+    occasions: ['work', 'casual', 'formal'],
+  },
+  {
+    category: 'outerwear',
+    subCategory: 'marynarka klasyczna',
+    dominantColor: 'Granat',
+    colorHex: '#1d2d50',
+    pattern: 'solid',
+    brightnessType: 'dark',
+    occasions: ['work', 'formal', 'party', 'casual'],
+  },
+  {
+    category: 'top',
+    subCategory: 'sweter z wełny merino',
+    dominantColor: 'Kremowy / Écru',
+    colorHex: '#f3ead8',
+    pattern: 'solid',
+    brightnessType: 'light',
+    occasions: ['casual', 'work'],
+  },
+  {
+    category: 'bottom',
+    subCategory: 'jeansy proste',
+    dominantColor: 'Niebieski / Denim',
+    colorHex: '#3b6998',
+    pattern: 'solid',
+    brightnessType: 'neutral',
+    occasions: ['casual', 'work', 'party'],
+  },
+  {
+    category: 'outerwear',
+    subCategory: 'trencz przeciwdeszczowy',
+    dominantColor: 'Beż',
+    colorHex: '#d8c3a5',
+    pattern: 'solid',
+    brightnessType: 'light',
+    occasions: ['work', 'formal', 'casual'],
+  },
+  {
+    category: 'shoes',
+    subCategory: 'białe skórzane sneakersy',
+    dominantColor: 'Biel',
+    colorHex: '#f5f5f3',
+    pattern: 'solid',
+    brightnessType: 'light',
+    occasions: ['casual', 'work', 'sport'],
+  },
+  {
+    category: 'top',
+    subCategory: 'golf',
+    dominantColor: 'Czerń',
+    colorHex: '#18181c',
+    pattern: 'solid',
+    brightnessType: 'dark',
+    occasions: ['work', 'formal', 'casual', 'party'],
+  },
+  {
+    category: 'top',
+    subCategory: 'koszula błękitna',
+    dominantColor: 'Błękit',
+    colorHex: '#7bb2e0',
+    pattern: 'solid',
+    brightnessType: 'light',
+    occasions: ['work', 'formal', 'casual'],
+  },
+  {
+    category: 'shoes',
+    subCategory: 'skórzane sztyblety / botki',
+    dominantColor: 'Brąz',
+    colorHex: '#6b442a',
+    pattern: 'solid',
+    brightnessType: 'dark',
+    occasions: ['work', 'casual', 'formal'],
+  },
+];
+
+export function generateSmartWishlist(
+  items: ClothingItem[],
+  profile?: PersonalColorProfile
+): SmartWishlistSuggestion[] {
+  const activeProfile = profile ?? loadPersonalProfile();
+  const missingStaples = CLASSIC_STAPLES.filter(
+    (staple) =>
+      !items.some(
+        (i) =>
+          i.category === staple.category &&
+          i.dominantColor === staple.dominantColor &&
+          (i.pattern ?? 'solid') === 'solid'
+      )
+  );
+
+  const poolToEvaluate = missingStaples.length >= 3 ? missingStaples : CLASSIC_STAPLES;
+
+  return poolToEvaluate
+    .map((candidate) => {
+      const analysis = analyzePurchaseCandidate(candidate, items, activeProfile);
+      return {
+        title: `${candidate.subCategory} (${candidate.dominantColor})`,
+        category: candidate.category,
+        subCategory: candidate.subCategory,
+        dominantColor: candidate.dominantColor,
+        colorHex: candidate.colorHex,
+        newOutfitsCount: Math.max(3, analysis.newOutfitsCount),
+        overallScore: analysis.overallScore,
+        reason:
+          analysis.pros[0] ??
+          `Odblokuje ${Math.max(3, analysis.newOutfitsCount)} nowych zestawów z rzeczami w Twojej szafie.`,
+      };
+    })
+    .sort((a, b) => b.overallScore * 2 + b.newOutfitsCount - (a.overallScore * 2 + a.newOutfitsCount))
+    .slice(0, 4);
+}
+
+// ---------- 3. Inteligentna Pralnia i Sortowanie Wsadów ----------
+
+export interface LaundryLoadGroup {
+  id: 'white' | 'dark' | 'delicate' | 'color';
+  title: string;
+  emoji: string;
+  programHint: string;
+  items: ClothingItem[];
+}
+
+export function groupLaundryIntoLoads(items: ClothingItem[]): LaundryLoadGroup[] {
+  const dirty = items.filter((i) => i.inLaundry);
+  const white: ClothingItem[] = [];
+  const dark: ClothingItem[] = [];
+  const delicate: ClothingItem[] = [];
+  const color: ClothingItem[] = [];
+
+  for (const item of dirty) {
+    const s = item.subCategory.toLowerCase();
+    const isDelicate =
+      s.includes('sweter') ||
+      s.includes('kardigan') ||
+      s.includes('satyn') ||
+      s.includes('jedwab') ||
+      s.includes('apaszka') ||
+      s.includes('wieczorow') ||
+      s.includes('plisowan');
+
+    if (isDelicate) {
+      delicate.push(item);
+    } else if (
+      item.dominantColor === 'Biel' ||
+      (item.dominantColor === 'Kremowy / Écru' && (item.pattern ?? 'solid') === 'solid')
+    ) {
+      white.push(item);
+    } else if (item.brightnessType === 'dark') {
+      dark.push(item);
+    } else {
+      color.push(item);
+    }
+  }
+
+  const groups: LaundryLoadGroup[] = [
+    {
+      id: 'white',
+      title: 'Pranie białe i jasne',
+      emoji: '⚪',
+      programHint: 'Bawełna 40°C · bez ciemnych rzeczy',
+      items: white,
+    },
+    {
+      id: 'dark',
+      title: 'Pranie czarne i ciemne',
+      emoji: '⚫',
+      programHint: 'Ciemne 30°C · na lewej stronie',
+      items: dark,
+    },
+    {
+      id: 'color',
+      title: 'Pranie kolorowe',
+      emoji: '🎨',
+      programHint: 'Syntetyki / Mix 30°C–40°C',
+      items: color,
+    },
+    {
+      id: 'delicate',
+      title: 'Wełna, jedwab i delikatne',
+      emoji: '🌸',
+      programHint: 'Program Wełna/Delikatne 20°C · niskie obroty (600 rpm)',
+      items: delicate,
+    },
+  ];
+  return groups.filter((g) => g.items.length > 0);
+}
+
 

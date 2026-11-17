@@ -1,7 +1,9 @@
 import type {
+  BodyShapeId,
   BrightnessType,
   Category,
   DayPreference,
+  FitType,
   Occasion,
   PatternType,
   TempRange,
@@ -120,6 +122,83 @@ export const PATTERN_LABELS = Object.fromEntries(
 export const PATTERN_EMOJIS = Object.fromEntries(
   PATTERNS.map((p) => [p.id, p.emoji])
 ) as Record<PatternType, string>;
+
+export const FIT_TYPES: { id: FitType; label: string; emoji: string; hint: string }[] = [
+  {
+    id: 'slim',
+    label: 'Dopasowany (Slim)',
+    emoji: '🪡',
+    hint: 'Blisko ciała – świetnie równoważy luźniejszy dół lub górę',
+  },
+  {
+    id: 'regular',
+    label: 'Klasyczny (Regular)',
+    emoji: '👔',
+    hint: 'Uniwersalny krój pasujący do każdego fasonu',
+  },
+  {
+    id: 'oversize',
+    label: 'Luźny (Oversize / Wide)',
+    emoji: '🧥',
+    hint: 'Swobodna objętość – najlepiej wygląda z bardziej dopasowaną drugą częścią stroju',
+  },
+];
+
+export const FIT_LABELS: Record<FitType, string> = {
+  slim: 'Dopasowany',
+  regular: 'Klasyczny',
+  oversize: 'Luźny / Oversize',
+};
+
+export const BODY_SHAPES: {
+  id: BodyShapeId;
+  label: string;
+  emoji: string;
+  hint: string;
+}[] = [
+  {
+    id: 'hourglass',
+    label: 'Klepsydra (proporcjonalna z talią)',
+    emoji: '⏳',
+    hint: 'Równe ramiona i biodra z wcięciem w talii – służy podkreślenie proporcji i fasony regular/slim',
+  },
+  {
+    id: 'pear',
+    label: 'Gruszka / Trójkąt (szersze biodra)',
+    emoji: '🍐',
+    hint: 'Węższe ramiona i pełniejsze biodra – służy przyciągnięcie uwagi do góry (jaśniejsza/wzorzysta góra) i prosty dół',
+  },
+  {
+    id: 'apple',
+    label: 'Jabłko / Owal (pełniejszy środek)',
+    emoji: '🍎',
+    hint: 'Mniej zarysowana talia i zgrabne nogi – służą gładkie, luźniejsze góry (regular/oversize) i dopasowany dół',
+  },
+  {
+    id: 'rectangle',
+    label: 'Prostokąt / Kolumna (smukła)',
+    emoji: '📏',
+    hint: 'Zbliżona szerokość ramion, talii i bioder – świetnie wyglądają kontrasty objętości (oversize + slim) i warstwowanie',
+  },
+  {
+    id: 'inverted_triangle',
+    label: 'Odwrócony trójkąt (szersze ramiona)',
+    emoji: '🔻',
+    hint: 'Wyraziste ramiona i węższe biodra – służy spokojna, gładka góra oraz szerszy lub jaśniejszy dół',
+  },
+  {
+    id: 'athletic',
+    label: 'Atletyczna / Trapez (sportowa)',
+    emoji: '🏋️',
+    hint: 'Harmonijna, sportowa sylwetka – najlepiej prezentuje się w krojach klasycznych (regular) i dopasowanych (slim)',
+  },
+];
+
+export const THERMAL_OFFSETS: { value: number; label: string; emoji: string; hint: string }[] = [
+  { value: -3, label: 'Zmarzluch (-3°C)', emoji: '🥶', hint: 'Szybko marznę – proponuj cieplejsze ubrania i warstwy' },
+  { value: 0, label: 'Standardowo (0°C)', emoji: '🙂', hint: 'Odczuwam temperaturę zgodnie z prognozą' },
+  { value: 3, label: 'Zawsze mi ciepło (+3°C)', emoji: '🔥', hint: 'Rzadko marznę – proponuj lżejsze warstwy' },
+];
 
 /** Kolejność od najzimniejszego – używana m.in. przez suwak temperatury. */
 export const TEMP_RANGES: { id: TempRange; label: string; hint: string }[] = [
@@ -274,4 +353,62 @@ export const SUBCATEGORIES: Record<Category, SubCategoryPreset[]> = {
 export function defaultOccasions(category: Category, subCategory: string): Occasion[] {
   const preset = SUBCATEGORIES[category]?.find((x) => x.label === subCategory);
   return preset ? [...preset.occasions] : ['casual'];
+}
+
+/** Domyślny krój (fit) na podstawie podkategorii ubrania. */
+export function defaultFitForSubCategory(category: Category, subCategory: string): FitType {
+  const s = subCategory.toLowerCase();
+  if (
+    s.includes('oversize') ||
+    s.includes('bluza z kapturem') ||
+    s.includes('kuloty') ||
+    s.includes('cargo') ||
+    s.includes('dres') ||
+    s.includes('puchow') ||
+    s.includes('parka') ||
+    s.includes('sweter pleciony')
+  ) {
+    return 'oversize';
+  }
+  if (
+    s.includes('golf') ||
+    s.includes('body') ||
+    s.includes('ramiączk') ||
+    s.includes('crop') ||
+    s.includes('leggins') ||
+    s.includes('kolarki') ||
+    s.includes('cygaretki') ||
+    s.includes('wieczorow') ||
+    (category === 'top' && s.includes('koszula wizytowa'))
+  ) {
+    return 'slim';
+  }
+  return 'regular';
+}
+
+/** Domyślna liczba założeń przed automatycznym przeniesieniem do kosza na pranie. */
+export function defaultMaxWearsForSubCategory(category: Category, subCategory: string): number {
+  const s = subCategory.toLowerCase();
+  if (category === 'outerwear' || category === 'shoes' || category === 'bag') {
+    return 99;
+  }
+  if (category === 'accessory') {
+    return 99;
+  }
+  if (category === 'top') {
+    if (s.includes('sweter') || s.includes('kardigan') || s.includes('kamizelka')) return 4;
+    if (s.includes('bluza')) return 3;
+    if (s.includes('koszula') || s.includes('golf') || s.includes('bluzka')) return 2;
+    return 1; // t-shirty, topy, koszulki sportowe – po 1 założeniu
+  }
+  if (category === 'onepiece') {
+    if (s.includes('garnitur')) return 5;
+    return 2;
+  }
+  if (category === 'bottom') {
+    if (s.includes('jeans')) return 5;
+    if (s.includes('leggins') || s.includes('kolarki') || s.includes('dres')) return 2;
+    return 3; // spodnie materiałowe, chinosy, spódnice, szorty
+  }
+  return 3;
 }

@@ -2,10 +2,15 @@ import type {
   BrightnessType,
   Category,
   ClothingItem,
+  FitType,
   Occasion,
   PatternType,
   TempRange,
 } from '../types';
+import {
+  defaultFitForSubCategory,
+  defaultMaxWearsForSubCategory,
+} from './constants';
 import { db, newId } from './db';
 import { blobToDataUrl } from './image';
 import { hexToRgb, rgbToHex } from './palette';
@@ -1065,6 +1070,49 @@ async function fetchDemoPhotoAsDataUrl(spec: DemoSpec): Promise<string> {
   return url;
 }
 
+function defaultDemoPriceAndBrand(
+  category: Category,
+  subCategory: string
+): { price: number; brand: string; fit: FitType; maxWearsBeforeLaundry: number } {
+  const s = subCategory.toLowerCase();
+  const fit = defaultFitForSubCategory(category, subCategory);
+  const maxWearsBeforeLaundry = defaultMaxWearsForSubCategory(category, subCategory);
+  if (category === 'top') {
+    if (s.includes('sweter') || s.includes('golf')) return { price: 199, brand: 'Massimo Dutti', fit, maxWearsBeforeLaundry };
+    if (s.includes('koszula')) return { price: 169, brand: 'COS', fit, maxWearsBeforeLaundry };
+    if (s.includes('bluza')) return { price: 179, brand: 'Uniqlo', fit, maxWearsBeforeLaundry };
+    if (s.includes('satyn') || s.includes('paski')) return { price: 139, brand: 'Arket', fit, maxWearsBeforeLaundry };
+    return { price: 79, brand: 'Uniqlo', fit, maxWearsBeforeLaundry };
+  }
+  if (category === 'bottom') {
+    if (s.includes('jeans')) return { price: 249, brand: "Levi's", fit, maxWearsBeforeLaundry };
+    if (s.includes('krat') || s.includes('garnitur') || s.includes('materiał')) return { price: 229, brand: 'COS', fit, maxWearsBeforeLaundry };
+    if (s.includes('spódnic')) return { price: 189, brand: 'Zara', fit, maxWearsBeforeLaundry };
+    return { price: 149, brand: 'H&M', fit, maxWearsBeforeLaundry };
+  }
+  if (category === 'onepiece') {
+    if (s.includes('wieczorow')) return { price: 349, brand: 'Massimo Dutti', fit, maxWearsBeforeLaundry };
+    return { price: 259, brand: '& Other Stories', fit, maxWearsBeforeLaundry };
+  }
+  if (category === 'outerwear') {
+    if (s.includes('trencz') || s.includes('płaszcz')) return { price: 549, brand: 'Massimo Dutti', fit, maxWearsBeforeLaundry };
+    if (s.includes('skórzan')) return { price: 649, brand: 'AllSaints', fit, maxWearsBeforeLaundry };
+    if (s.includes('puchow')) return { price: 429, brand: 'Uniqlo', fit, maxWearsBeforeLaundry };
+    return { price: 389, brand: 'COS', fit, maxWearsBeforeLaundry };
+  }
+  if (category === 'shoes') {
+    if (s.includes('botk') || s.includes('sztyblet') || s.includes('półbut')) return { price: 449, brand: 'Vagabond', fit, maxWearsBeforeLaundry };
+    if (s.includes('szpilk')) return { price: 369, brand: 'Kazar', fit, maxWearsBeforeLaundry };
+    return { price: 329, brand: 'New Balance', fit, maxWearsBeforeLaundry };
+  }
+  if (category === 'bag') {
+    return { price: 349, brand: 'Wittchen', fit, maxWearsBeforeLaundry };
+  }
+  if (s.includes('zegar')) return { price: 499, brand: 'Tissot', fit, maxWearsBeforeLaundry };
+  if (s.includes('okular')) return { price: 299, brand: 'Ray-Ban', fit, maxWearsBeforeLaundry };
+  return { price: 129, brand: 'COS', fit, maxWearsBeforeLaundry };
+}
+
 /**
  * Ładuje wybraną szafę testową ('women' – Damską lub 'men' – Męską) ze zdjęciami pobranymi z Internetu.
  * Przed załadowaniem czyści poprzednią zawartość szafy, aby nie mieszać ubrań damskich i męskich.
@@ -1084,25 +1132,33 @@ export async function seedDemoWardrobe(
 
   const dataUrls = await Promise.all(specs.map((spec) => fetchDemoPhotoAsDataUrl(spec)));
 
-  const created: ClothingItem[] = specs.map((spec, i) => ({
-    id: newId(),
-    imageDataUrl: dataUrls[i],
-    category: spec.category,
-    subCategory: spec.subCategory,
-    tempRange: spec.tempRange,
-    isRainproof: Boolean(spec.isRainproof),
-    dominantColor: spec.dominantColor,
-    colorHex: spec.colorHex,
-    secondaryColors: spec.secondaryColors ? [...spec.secondaryColors] : [],
-    secondaryColorHexes: spec.secondaryColorHexes ? [...spec.secondaryColorHexes] : [],
-    pattern: spec.pattern ?? 'solid',
-    brightnessType: spec.brightnessType,
-    occasions: [...spec.occasions],
-    createdAt: now - (specs.length - i) * 60000,
-    wearCount: 0,
-    inLaundry: false,
-    isFavorite: false,
-  }));
+  const created: ClothingItem[] = specs.map((spec, i) => {
+    const meta = defaultDemoPriceAndBrand(spec.category, spec.subCategory);
+    return {
+      id: newId(),
+      imageDataUrl: dataUrls[i],
+      category: spec.category,
+      subCategory: spec.subCategory,
+      tempRange: spec.tempRange,
+      isRainproof: Boolean(spec.isRainproof),
+      dominantColor: spec.dominantColor,
+      colorHex: spec.colorHex,
+      secondaryColors: spec.secondaryColors ? [...spec.secondaryColors] : [],
+      secondaryColorHexes: spec.secondaryColorHexes ? [...spec.secondaryColorHexes] : [],
+      pattern: spec.pattern ?? 'solid',
+      fit: meta.fit,
+      price: meta.price,
+      brand: meta.brand,
+      brightnessType: spec.brightnessType,
+      occasions: [...spec.occasions],
+      createdAt: now - (specs.length - i) * 60000,
+      wearCount: 0,
+      wearsSinceWash: 0,
+      maxWearsBeforeLaundry: meta.maxWearsBeforeLaundry,
+      inLaundry: false,
+      isFavorite: false,
+    };
+  });
 
   await db.transaction('rw', db.items, db.outfits, async () => {
     await db.items.clear();
@@ -1168,6 +1224,11 @@ export async function repairWardrobeDatabase(): Promise<void> {
         needsSave = true;
       }
 
+      const meta = defaultDemoPriceAndBrand(item.category, item.subCategory);
+      if (!item.fit || item.price === undefined || item.maxWearsBeforeLaundry === undefined) {
+        needsSave = true;
+      }
+
       if (needsSave) {
         const cleaned: ClothingItem = {
           id: item.id,
@@ -1181,6 +1242,9 @@ export async function repairWardrobeDatabase(): Promise<void> {
           secondaryColors: item.secondaryColors ?? [],
           secondaryColorHexes: item.secondaryColorHexes ?? [],
           pattern: item.pattern ?? 'solid',
+          fit: item.fit ?? meta.fit,
+          price: item.price ?? meta.price,
+          brand: item.brand ?? meta.brand,
           brightnessType: item.brightnessType,
           occasions:
             Array.isArray(item.occasions) && item.occasions.length > 0
@@ -1189,6 +1253,8 @@ export async function repairWardrobeDatabase(): Promise<void> {
           createdAt: item.createdAt ?? Date.now(),
           lastWornAt: outfitsCount === 0 ? undefined : item.lastWornAt,
           wearCount,
+          wearsSinceWash: item.wearsSinceWash ?? 0,
+          maxWearsBeforeLaundry: item.maxWearsBeforeLaundry ?? meta.maxWearsBeforeLaundry,
           inLaundry: Boolean(item.inLaundry),
           isFavorite: Boolean(item.isFavorite),
         };

@@ -22,6 +22,18 @@ export type PatternType =
   | 'floral' // wzór kwiatowy / roślinny / artystyczny
   | 'dots'; // drobny deseń / groszki / mikro-wzór
 
+/** Krój / fason ubrania (do zasady proporcji sylwetki). */
+export type FitType = 'slim' | 'regular' | 'oversize';
+
+/** Typ sylwetki użytkownika. */
+export type BodyShapeId =
+  | 'hourglass'
+  | 'pear'
+  | 'apple'
+  | 'rectangle'
+  | 'inverted_triangle'
+  | 'athletic';
+
 export interface ClothingItem {
   id: string; // UUID
   imageBlob?: Blob; // opcjonalny Blob (dla kompatybilności wstecznej)
@@ -35,11 +47,16 @@ export interface ClothingItem {
   secondaryColors?: string[]; // dodatkowe kolory (wielokolorowość / barwy wzoru lub nadruku)
   secondaryColorHexes?: string[]; // HEX-y dodatkowych kolorów
   pattern?: PatternType; // gładkie / nadruk / paski / kratka / kwiaty / drobny wzór
+  fit?: FitType; // krój: dopasowany (slim), klasyczny (regular) lub luźny (oversize)
+  price?: number; // cena zakupu w zł (do obliczania Cost Per Wear)
+  brand?: string; // opcjonalna marka ubrania
   brightnessType: BrightnessType;
   occasions: Occasion[]; // do jakich okazji pasuje (może być kilka)
   createdAt: number;
   lastWornAt?: number; // ostatnie zaakceptowanie w stylizacji (do rotacji ubrań)
-  wearCount?: number; // ile razy założono ubranie
+  wearCount?: number; // ile razy założono ubranie łącznie
+  wearsSinceWash?: number; // ile razy założono od ostatniego prania
+  maxWearsBeforeLaundry?: number; // po ilu założeniach automatycznie trafia do prania
   inLaundry?: boolean; // czy ubranie jest obecnie w praniu (wykluczone z losowania)
   isFavorite?: boolean; // ulubione ubranie (lekki priorytet przy doborze)
 }
@@ -77,6 +94,10 @@ export interface PersonalColorProfile {
   skinTone: SkinToneId;
   hairColor: HairColorId;
   eyeColor: EyeColorId;
+  bodyShape?: BodyShapeId;
+  preferredFit?: FitType;
+  /** Osobista korekta odczuwania temperatury w °C (np. -3 dla zmarzlucha, +3 gdy zawsze ciepło). */
+  thermalOffset?: number;
 }
 
 export type NewClothingItem = Omit<ClothingItem, 'id' | 'createdAt' | 'lastWornAt'>;
@@ -101,6 +122,15 @@ export type WeatherKind =
   | 'snow'
   | 'storm';
 
+export interface DailyForecastDay {
+  date: string; // YYYY-MM-DD
+  apparentTempMax: number;
+  apparentTempMin: number;
+  apparentTemperature: number;
+  precipitationSum: number;
+  weatherCode: number;
+}
+
 export interface WeatherData {
   temperature: number;
   apparentTemperature: number;
@@ -108,6 +138,7 @@ export interface WeatherData {
   weatherCode: number;
   isDay: boolean;
   fetchedAt: number;
+  daily?: DailyForecastDay[];
 }
 
 export interface Place {
@@ -118,8 +149,10 @@ export interface Place {
 }
 
 export interface Outfit {
-  /** Góra (gdy strój dwuczęściowy) */
+  /** Góra bazowa (gdy strój dwuczęściowy) */
   top?: ClothingItem;
+  /** Druga warstwa góry – ubieranie „na cebulkę” (np. sweter/kardigan/bluza na t-shirt lub koszulę) */
+  midLayer?: ClothingItem;
   /** Dół (gdy strój dwuczęściowy) */
   bottom?: ClothingItem;
   /** Sukienka / kombinezon / garnitur (gdy strój jednoczęściowy) */
@@ -128,8 +161,8 @@ export interface Outfit {
   outerwear?: ClothingItem;
   bag?: ClothingItem;
   accessories: ClothingItem[];
-  notes: string[]; // wskazówki, np. brak kurtki przeciwdeszczowej
-  score: number; // 0-100, harmonia barw
+  notes: string[]; // wskazówki stylisty i pogodowe
+  score: number; // 0-100, harmonia barw, wzorów i proporcji
   signature: string; // do wykluczania powtórek przy "Losuj inny zestaw"
 }
 

@@ -1,6 +1,6 @@
-import { Heart, Info, Lock, RefreshCw, Umbrella, Unlock } from 'lucide-react';
+import { Camera, Heart, Info, Lock, RefreshCw, Umbrella, Unlock } from 'lucide-react';
 import type { Category, ClothingItem, Outfit } from '../types';
-import { CATEGORY_LABELS, PATTERN_EMOJIS, PATTERN_LABELS } from '../lib/constants';
+import { CATEGORY_LABELS, FIT_LABELS, PATTERN_EMOJIS, PATTERN_LABELS } from '../lib/constants';
 import { ColorDots, ItemImage } from './ui';
 
 function Piece({
@@ -77,6 +77,7 @@ function Piece({
         />
         <span className="truncate">
           <span className="font-semibold text-white">{label}</span> · {item.subCategory}
+          {item.fit && item.fit !== 'regular' ? ` (${FIT_LABELS[item.fit]})` : ''}
         </span>
       </div>
     </div>
@@ -90,6 +91,7 @@ export default function OutfitCard({
   onSwapPiece,
   isSavedFavorite,
   onSaveFavorite,
+  onExportCollage,
 }: {
   outfit: Outfit;
   lockedCategories?: Partial<Record<Category, ClothingItem>>;
@@ -97,12 +99,21 @@ export default function OutfitCard({
   onSwapPiece?: (cat: Category) => void;
   isSavedFavorite?: boolean;
   onSaveFavorite?: () => void;
+  onExportCollage?: () => void;
 }) {
-  const main: { item: ClothingItem; label: string; cat: Category }[] = [];
+  const main: { item: ClothingItem; label: string; cat: Category; isMidLayer?: boolean }[] = [];
   if (outfit.onepiece) {
     main.push({ item: outfit.onepiece, label: 'Sukienka / 1-cz.', cat: 'onepiece' });
   } else {
     if (outfit.top) main.push({ item: outfit.top, label: CATEGORY_LABELS.top, cat: 'top' });
+    if (outfit.midLayer) {
+      main.push({
+        item: outfit.midLayer,
+        label: '2. warstwa (na cebulkę)',
+        cat: 'top',
+        isMidLayer: true,
+      });
+    }
     if (outfit.bottom)
       main.push({ item: outfit.bottom, label: CATEGORY_LABELS.bottom, cat: 'bottom' });
   }
@@ -119,13 +130,24 @@ export default function OutfitCard({
         <div>
           <h2 className="text-base font-bold">Twój zestaw</h2>
           <p className="text-[11px] text-ink-400">
-            🔒 przypnij wybrany element · 🔄 wymień pojedynczą rzecz
+            🔒 przypnij element · 🔄 wymień · 📸 pobierz kolaż
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
             Harmonia {outfit.score}%
           </span>
+          {onExportCollage && (
+            <button
+              type="button"
+              onClick={onExportCollage}
+              title="Pobierz kartę stylizacji jako obrazek (JPG)"
+              aria-label="Pobierz kolaż stylizacji"
+              className="rounded-full bg-ink-800 p-2 text-ink-300 transition-colors active:bg-accent-500 active:text-white"
+            >
+              <Camera size={16} />
+            </button>
+          )}
           {onSaveFavorite && (
             <button
               type="button"
@@ -153,12 +175,14 @@ export default function OutfitCard({
       <div className="grid grid-cols-2 gap-3">
         {main.map((m) => (
           <Piece
-            key={m.item.id}
+            key={`${m.item.id}-${m.label}`}
             item={m.item}
             label={m.label}
-            locked={Boolean(lockedCategories?.[m.cat]?.id === m.item.id)}
-            onToggleLock={onToggleLock ? () => onToggleLock(m.cat, m.item) : undefined}
-            onSwap={onSwapPiece ? () => onSwapPiece(m.cat) : undefined}
+            locked={Boolean(!m.isMidLayer && lockedCategories?.[m.cat]?.id === m.item.id)}
+            onToggleLock={
+              !m.isMidLayer && onToggleLock ? () => onToggleLock(m.cat, m.item) : undefined
+            }
+            onSwap={!m.isMidLayer && onSwapPiece ? () => onSwapPiece(m.cat) : undefined}
           />
         ))}
       </div>

@@ -1,5 +1,6 @@
 import { Sparkles } from 'lucide-react';
 import type { PersonalColorProfile } from '../types';
+import { BODY_SHAPES, FIT_TYPES, THERMAL_OFFSETS } from '../lib/constants';
 import {
   EYE_COLORS,
   HAIR_COLORS,
@@ -194,6 +195,97 @@ export default function PersonalPaletteSheet({
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-semibold text-white">{e.label}</div>
                     <div className="truncate text-[10px] text-ink-400">{e.hint}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 4. Typ sylwetki (Body Shape & Proporcje) */}
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+            4. Typ Twojej sylwetki (Dobór fasonów i proporcji)
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            {BODY_SHAPES.map((b) => {
+              const active = (profile.bodyShape ?? 'hourglass') === b.id;
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => onChange({ ...profile, bodyShape: b.id })}
+                  className={`flex items-center gap-3 rounded-2xl p-2.5 text-left transition-colors ${
+                    active
+                      ? 'bg-accent-500/20 ring-2 ring-accent-400'
+                      : 'bg-ink-800 active:bg-ink-700'
+                  }`}
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink-900 text-lg">
+                    {b.emoji}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-white sm:text-sm">{b.label}</div>
+                    <div className="text-[11px] leading-snug text-ink-400">{b.hint}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 5. Preferowany krój ubrań */}
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+            5. Ulubiony krój ubrań
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {FIT_TYPES.map((f) => {
+              const active = (profile.preferredFit ?? 'regular') === f.id;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => onChange({ ...profile, preferredFit: f.id })}
+                  className={`rounded-2xl p-2.5 text-center transition-colors ${
+                    active
+                      ? 'bg-accent-500/20 ring-2 ring-accent-400'
+                      : 'bg-ink-800 active:bg-ink-700'
+                  }`}
+                >
+                  <div className="text-base">{f.emoji}</div>
+                  <div className="mt-1 text-xs font-semibold text-white">{f.label}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 6. Osobiste odczuwanie temperatury */}
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+            6. Odczuwanie temperatury (Warstwowanie „na cebulkę”)
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            {THERMAL_OFFSETS.map((t) => {
+              const active = (profile.thermalOffset ?? 0) === t.value;
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => onChange({ ...profile, thermalOffset: t.value })}
+                  className={`flex items-center gap-3 rounded-2xl p-2.5 text-left transition-colors ${
+                    active
+                      ? 'bg-accent-500/20 ring-2 ring-accent-400'
+                      : 'bg-ink-800 active:bg-ink-700'
+                  }`}
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink-900 text-lg">
+                    {t.emoji}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-white sm:text-sm">{t.label}</div>
+                    <div className="text-[11px] text-ink-400">{t.hint}</div>
                   </div>
                 </button>
               );

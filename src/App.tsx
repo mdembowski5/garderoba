@@ -68,7 +68,7 @@ export default function App() {
           <Wardrobe onNavigate={setTab} notify={notify} />
         </div>
         <div className={screen('assistant')}>
-          <Assistant notify={notify} />
+          <Assistant weatherState={weatherState} notify={notify} />
         </div>
 
         {toast && (

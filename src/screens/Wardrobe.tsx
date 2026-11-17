@@ -5,10 +5,11 @@ import type {
   BrightnessType,
   Category,
   ClothingItem,
+  FitType,
   Occasion,
   PatternType,
 } from '../types';
-import { clearLaundry, db, deleteItem, updateItem } from '../lib/db';
+import { clearLaundry, clearLaundryByIds, db, deleteItem, updateItem } from '../lib/db';
 import {
   DEMO_MEN_COUNT,
   DEMO_WOMEN_COUNT,
@@ -21,6 +22,8 @@ import {
   CATEGORY_EMOJIS,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
+  FIT_LABELS,
+  FIT_TYPES,
   OCCASIONS,
   PATTERNS,
   PATTERN_EMOJIS,
@@ -28,6 +31,7 @@ import {
   SUBCATEGORIES,
   TEMP_RANGES,
 } from '../lib/constants';
+import { groupLaundryIntoLoads } from '../lib/outfit';
 import { PALETTE, brightnessOfHex } from '../lib/palette';
 import { BottomSheet, Chip, ColorDot, ColorDots, ItemImage } from '../components/ui';
 import type { Tab } from '../components/TabBar';
@@ -211,6 +215,27 @@ export default function Wardrobe({
     await updateItem(selected.id, { pattern: newPattern });
   };
 
+  const changeFit = async (newFit: FitType) => {
+    if (!selected) return;
+    setSelected((prev) => (prev ? { ...prev, fit: newFit } : prev));
+    await updateItem(selected.id, { fit: newFit });
+  };
+
+  const changePrice = async (raw: string) => {
+    if (!selected) return;
+    const val = raw === '' ? undefined : Math.max(0, Math.round(Number(raw)));
+    setSelected((prev) => (prev ? { ...prev, price: val } : prev));
+    await updateItem(selected.id, { price: val });
+  };
+
+  const changeMaxWears = async (maxWears: number) => {
+    if (!selected) return;
+    setSelected((prev) => (prev ? { ...prev, maxWearsBeforeLaundry: maxWears } : prev));
+    await updateItem(selected.id, { maxWearsBeforeLaundry: maxWears });
+  };
+
+  const laundryLoads = useMemo(() => groupLaundryIntoLoads(items ?? []), [items]);
+
   const remove = async () => {
     if (!selected) return;
     if (!confirmDelete) {
@@ -310,6 +335,57 @@ export default function Wardrobe({
           </Chip>
         ))}
       </div>
+
+      {/* Inteligentna Pralnia i Sortowanie Wsadów (widoczne przy filtrze "W praniu" lub gdy są brudne rzeczy) */}
+      {counts.laundry > 0 && cat === 'laundry' && (
+        <section className="mx-4 mb-4 space-y-2.5 rounded-3xl bg-ink-900 p-4 ring-1 ring-sky-400/30">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="flex items-center gap-1.5 text-sm font-bold text-white">
+                <WashingMachine size={16} className="text-sky-400" /> Inteligentne sortowanie prania
+              </h2>
+              <p className="text-[11px] text-ink-400">
+                Ubrania z kosza na pranie podzielone automatycznie na bezpieczne wsady do pralki:
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleWashAll}
+              className="shrink-0 rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-bold text-white active:bg-sky-600"
+            >
+              Wypierz wszystko ({counts.laundry})
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {laundryLoads.map((load) => (
+              <div
+                key={load.id}
+                className="flex items-center justify-between gap-2 rounded-2xl bg-ink-800 p-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-white">
+                    {load.emoji} {load.title} ({load.items.length})
+                  </div>
+                  <div className="text-[10px] text-ink-400">{load.programHint}</div>
+                  <div className="mt-1 truncate text-[11px] text-ink-300">
+                    {load.items.map((i) => i.subCategory).join(', ')}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await clearLaundryByIds(load.items.map((i) => i.id));
+                    notify(`Wyprano wsad: ${load.title} ✨`);
+                  }}
+                  className="shrink-0 rounded-xl bg-sky-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-sky-300 ring-1 ring-sky-400/40 active:bg-sky-500/30"
+                >
+                  Wypierz wsad
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {items && filtered.length === 0 ? (
         <div className="mx-4 rounded-3xl bg-ink-900 p-8 text-center">
@@ -489,7 +565,22 @@ export default function Wardrobe({
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-ink-400">Założono</dt>
-                  <dd>{selected.wearCount ?? 0} razy</dd>
+                  <dd>
+                    {selected.wearCount ?? 0} razy
+                    {selected.price
+                      ? ` · CPW: ${Math.round(
+                          selected.price / Math.max(1, selected.wearCount ?? 1)
+                        )} zł/zał.`
+                      : ''}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-400">Krój / Cena</dt>
+                  <dd className="truncate">
+                    {FIT_LABELS[selected.fit ?? 'regular']}
+                    {selected.price ? ` · ${selected.price} zł` : ''}
+                    {selected.brand ? ` (${selected.brand})` : ''}
+                  </dd>
                 </div>
               </dl>
             </div>
@@ -573,6 +664,60 @@ export default function Wardrobe({
                     {pt.emoji} {pt.shortLabel}
                   </Chip>
                 ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                Krój / Fason (do zasady proporcji sylwetki)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {FIT_TYPES.map((f) => (
+                  <Chip
+                    key={f.id}
+                    active={(selected.fit ?? 'regular') === f.id}
+                    onClick={() => changeFit(f.id)}
+                  >
+                    {f.emoji} {f.label}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+                  Cena zakupu (zł – CPW)
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  value={selected.price ?? ''}
+                  onChange={(e) => changePrice(e.target.value)}
+                  placeholder="np. 149"
+                  className="w-full rounded-xl bg-ink-800 px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-accent-400"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+                  Auto-pranie po {selected.maxWearsBeforeLaundry && selected.maxWearsBeforeLaundry < 90 ? `${selected.maxWearsBeforeLaundry} zał.` : 'wył.'}
+                </div>
+                <div className="flex gap-1">
+                  {[1, 2, 3, 5, 99].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => changeMaxWears(n)}
+                      className={`flex-1 rounded-xl py-2 text-xs font-semibold ${
+                        (selected.maxWearsBeforeLaundry ?? 3) === n
+                          ? 'bg-accent-500 text-white'
+                          : 'bg-ink-800 text-ink-300'
+                      }`}
+                    >
+                      {n === 99 ? '∞' : `${n}×`}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
